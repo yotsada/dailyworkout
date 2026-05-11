@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id          String       @id @default(cuid())
+  email       String?      @unique
+  username    String?      @unique
+  password    String?
+  googleId    String?      @unique
+  role        String       @default("user")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  profiles    Profile[]
+  workoutLogs WorkoutLog[]
+}
+
+model WorkoutLog {
+  id                 String   @id @default(cuid())
+  userId             String
+  profileId          String?
+  date               String
+  isRestDay          Boolean  @default(false)
+  exercisesCompleted Int      @default(0)
+  totalExercises     Int      @default(0)
+  exercises          Json     @default("[]")
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile            Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  createdAt          DateTime @default(now())
+
+  @@unique([userId, profileId, date])
+}
+
+model Equipment {
+  id               String             @id @default(cuid())
+  name             String             @unique
+  exercises        Exercise[]
+  profileEquipment ProfileEquipment[]
+}
+
+model Profile {
+  id          String             @id @default(cuid())
+  name        String
+  userId      String?
+  user        User?              @relation(fields: [userId], references: [id])
+  equipment   ProfileEquipment[]
+  days        ProfileDay[]
+  workoutLogs WorkoutLog[]
+  createdAt   DateTime           @default(now())
+}
+
+model ProfileEquipment {
+  profileId   String
+  equipmentId String
+  profile     Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  equipment   Equipment @relation(fields: [equipmentId], references: [id])
+
+  @@id([profileId, equipmentId])
+}
+
+model ProfileDay {
+  id        String        @id @default(cuid())
+  profileId String
+  day       String
+  bodyParts String[]
+  profile   Profile       @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  exercises DayExercise[]
+}
+
+model Exercise {
+  id           String        @id @default(cuid())
+  name         String        @unique
+  bodyPart     String
+  repType      String        @default("count") // 'count' | 'time'
+  equipmentId  String?
+  equipment    Equipment?    @relation(fields: [equipmentId], references: [id])
+  dayExercises DayExercise[]
+}
+
+model DayExercise {
+  id         String        @id @default(cuid())
+  dayId      String
+  exerciseId String
+  order      Int           @default(0)
+  day        ProfileDay    @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  exercise   Exercise      @relation(fields: [exerciseId], references: [id])
+  sets       ExerciseSet[]
+}
+
+model ExerciseSet {
+  id            String      @id @default(cuid())
+  dayExerciseId String
+  setNumber     Int
+  repType       String      @default("count") // 'count' | 'time'
+  reps          Int?                          // used when repType = 'count'
+  duration      Int?                          // seconds, used when repType = 'time'
+  restSeconds   Int         @default(60)
+  dayExercise   DayExercise @relation(fields: [dayExerciseId], references: [id], onDelete: Cascade)
+}

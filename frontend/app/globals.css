@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+:root {
+  --background: #7f1d1d;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  overscroll-behavior-y: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button, a, [role="button"] {
+  touch-action: manipulation;
+}
+
+input, textarea, select {
+  font-size: 16px;
+}
+
+.pixel-font {
+  font-family: 'Press Start 2P', monospace;
+}
+
+.pixel-font-small {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.6rem;
+}
+
+.btn-3d {
+  box-shadow: 0 5px 0 0 #991b1b;
+  transition: box-shadow 0.075s ease, transform 0.075s ease;
+}
+
+.btn-3d:active {
+  box-shadow: 0 0px 0 0 #991b1b;
+  transform: translateY(5px);
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #f3f4f6 25%, #e9eaec 50%, #f3f4f6 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite linear;
+}

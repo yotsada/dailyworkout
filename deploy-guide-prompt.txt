@@ -1,0 +1,90 @@
+สอนฉัน deploy โปรเจกต์นี้แบบ step-by-step โดยละเอียด
+
+===== ข้อมูลโปรเจกต์ =====
+
+ชื่อโปรเจกต์: dailyworkout
+เป็นแอปบันทึกการออกกำลังกาย
+
+โครงสร้าง:
+- backend/   → NestJS 11 + Prisma 7 + PostgreSQL  (รันที่ port 3000)
+- frontend/  → Next.js 16 + React 19 + Tailwind   (รันที่ port 3001)
+
+===== Stack และ Dependency สำคัญ =====
+
+Backend (NestJS):
+- @nestjs/jwt, passport-jwt  → auth ด้วย JWT
+- google-auth-library         → Google OAuth (verify idToken)
+- @prisma/client + pg         → เชื่อมต่อ PostgreSQL ผ่าน Prisma
+- bcryptjs                    → hash password
+- build command: npm run build  (prebuild จะ prisma generate อัตโนมัติ)
+- start command: node dist/main
+
+Frontend (Next.js):
+- App Router (ไม่ใช่ Pages Router)
+- Tailwind CSS v4
+- ไม่มี state management library พิเศษ ใช้ localStorage + useReducer
+
+===== Environment Variables ที่ต้องใช้ =====
+
+Backend (.env):
+  DATABASE_URL=           (PostgreSQL connection string จาก Supabase)
+  JWT_SECRET=             (string ลับสำหรับ sign JWT)
+  GOOGLE_CLIENT_ID=       (จาก Google Cloud Console)
+  FRONTEND_URL=           (URL ของ frontend ที่ deploy แล้ว เช่น https://dailyworkout.vercel.app)
+  PORT=3000
+
+Frontend (.env.local):
+  NEXT_PUBLIC_BACKEND_URL=   (URL ของ backend ที่ deploy แล้ว เช่น https://dailyworkout-api.onrender.com)
+  NEXT_PUBLIC_GOOGLE_CLIENT_ID=  (เดียวกับ backend)
+
+===== Database =====
+
+ใช้ Supabase (PostgreSQL) อยู่แล้ว
+- มี 2 connection string: transaction-mode (port 6543) และ session-mode (port 5432)
+- ใช้ session-mode (port 5432) สำหรับ migrate และ Prisma client ตอน production
+- ใช้ transaction-mode สำหรับ pooling ตอน runtime ได้
+
+===== แผน Deploy ที่เลือก (ฟรีทั้งหมด) =====
+
+1. Database  → Supabase (ใช้อยู่แล้ว ไม่ต้องทำอะไร)
+2. Backend   → Render (free tier, มี cold start ~30-50 วินาทีถ้า idle นาน 15 นาที)
+3. Frontend  → Vercel (free tier, ไม่มี cold start, รองรับ Next.js ดีที่สุด)
+
+===== สิ่งที่ต้องสอน =====
+
+กรุณาสอนทีละขั้นตอนดังนี้:
+
+ขั้นที่ 1: เตรียม Backend สำหรับ deploy บน Render
+- ไฟล์อะไรที่ต้องแก้ไขหรือเพิ่มบ้าง (เช่น health check endpoint)
+- การตั้งค่า build command และ start command บน Render
+- วิธีตั้ง environment variables บน Render dashboard
+- วิธี run migration (prisma migrate deploy) ก่อน start
+
+ขั้นที่ 2: Deploy Backend บน Render
+- สมัคร Render และเชื่อม GitHub repository
+- ตั้งค่าต่างๆ บน Render (free tier, region, etc.)
+- วิธีดู log และแก้ปัญหาถ้า deploy ไม่ผ่าน
+
+ขั้นที่ 3: เตรียม Frontend สำหรับ deploy บน Vercel
+- ไฟล์ที่ต้องแก้ไข เช่น hardcoded URL ที่ยังเป็น localhost
+- การตั้ง environment variables
+
+ขั้นที่ 4: Deploy Frontend บน Vercel
+- สมัคร Vercel และเชื่อม GitHub repository
+- ตั้งค่า environment variables บน Vercel dashboard
+- เลือก project directory (frontend/)
+
+ขั้นที่ 5: เชื่อม Frontend ↔ Backend
+- อัปเดต FRONTEND_URL ใน Render ให้เป็น Vercel URL จริง
+- ทดสอบ login, Google OAuth, และ workout flow
+
+ขั้นที่ 6: แก้ Google OAuth ให้ใช้งานได้บน production
+- เพิ่ม Authorized Origins และ Redirect URIs ใน Google Cloud Console
+
+ขั้นที่ 7 (bonus): ตั้ง cron job ping backend ทุก 14 นาที ผ่าน cron-job.org เพื่อไม่ให้ Render sleep
+
+===== หมายเหตุสำหรับผู้สอน =====
+
+- ฉันเป็นมือใหม่เรื่อง deploy ช่วยอธิบายแต่ละขั้นให้เข้าใจง่าย
+- บอกด้วยว่าต้องคลิกที่ไหน หรือพิมพ์คำสั่งอะไร
+- ถ้ามีจุดที่ผิดพลาดบ่อย ช่วยเตือนล่วงหน้าด้วย
