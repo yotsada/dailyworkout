@@ -449,7 +449,7 @@ function EditSetRepModal({ profile, onClose, onSave, onEditEquipment }: {
       const exs  = (days[day] ?? []).map((e, ei) => ei !== exIdx ? e : {
         ...e,
         sets: e.sets.map((s, si) => si !== setIdx ? s : {
-          ...s, repType: s.repType === 'count' ? 'time' : 'count',
+          ...s, repType: (s.repType === 'count' ? 'time' : 'count') as 'time' | 'count',
           reps: s.repType === 'count' ? 30 : 10,
         }),
       });

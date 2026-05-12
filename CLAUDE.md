@@ -1,11 +1,18 @@
 # dailyworkout — Project Map
 
+> **Rule:** Every time you modify code in this project, you MUST:
+> 1. Update the relevant section(s) of this file to reflect the change.
+> 2. Append an entry to `CHANGELOG.md` at the project root describing what changed, why, and which files were affected.
+
+---
+
 ## Structure
 
 ```
 dailyworkout/
 ├── backend/   NestJS API  (port 3000)
-└── frontend/  Next.js UI  (port 3001)
+├── frontend/  Next.js UI  (port 3001)
+└── CHANGELOG.md  code-change history (for rollback reference)
 ```
 
 ## Backend — NestJS + Prisma + PostgreSQL
@@ -32,15 +39,38 @@ dailyworkout/
 
 ### Database schema (Prisma)
 ```
-User          id, email, username, password?, googleId?, role
-Profile       id, name, userId — has days (ProfileDay[])
-ProfileDay    id, profileId, day (MON/TUE/…), bodyParts[], exercises (DayExercise[])
-DayExercise   id, dayId, exerciseId, order — has sets (ExerciseSet[])
-ExerciseSet   id, dayExerciseId, setNumber, repType(count|time), reps?, duration?, restSeconds
-Exercise      id, name, bodyPart, repType, equipmentId?
-Equipment     id, name
-WorkoutLog    id, userId, profileId?, date(YYYY-MM-DD), isRestDay, exercisesCompleted, totalExercises, exercises(JSON)
-ProfileEquipment  (profileId, equipmentId) composite PK
+User             id(cuid), email?(unique), username?(unique), password?, googleId?(unique),
+                 role(default:"user"), createdAt, updatedAt
+                 → profiles[], workoutLogs[]
+
+Profile          id(cuid), name, userId?
+                 → user?, equipment(ProfileEquipment[]), days(ProfileDay[]), workoutLogs[]
+                 createdAt
+
+ProfileDay       id(cuid), profileId, day(MON/TUE/WED/THU/FRI/SAT/SUN), bodyParts(String[])
+                 → profile, exercises(DayExercise[])
+
+DayExercise      id(cuid), dayId, exerciseId, order(default:0)
+                 → day, exercise, sets(ExerciseSet[])
+
+ExerciseSet      id(cuid), dayExerciseId, setNumber, repType(count|time),
+                 reps?(count only), duration?(seconds, time only), restSeconds(default:60)
+                 → dayExercise
+
+Exercise         id(cuid), name(unique), bodyPart, repType(default:"count"), equipmentId?
+                 → equipment?, dayExercises[]
+
+Equipment        id(cuid), name(unique)
+                 → exercises[], profileEquipment[]
+
+WorkoutLog       id(cuid), userId, profileId?, date(YYYY-MM-DD string),
+                 isRestDay(default:false), exercisesCompleted(default:0),
+                 totalExercises(default:0), exercises(Json, default:[]), createdAt
+                 → user, profile?
+                 @@unique([userId, profileId, date])
+
+ProfileEquipment (profileId, equipmentId) — composite PK
+                 → profile(cascade delete), equipment
 ```
 
 ### Env vars needed
@@ -123,3 +153,20 @@ cd backend && npx prisma migrate dev --name <name>
 ```bash
 cd backend && npx prisma generate
 ```
+
+---
+
+## Deployment
+
+### Backend → Render
+- Config file: `render.yaml` (root of repo)
+- Build: `npm install && npm run build` (runs `prisma generate` + `nest build`)
+- Start: `npm run start:prod` (runs `prisma db push` + `node dist/src/main`)
+- Compiled output: `dist/src/main.js` (tsconfig outDir=`./dist`, source in `src/`)
+- Set env vars in Render dashboard (see `backend/.env.example`)
+
+### Frontend → Vercel
+- Root directory: `frontend`
+- Build: auto-detected as `next build`
+- Set env vars in Vercel dashboard (see `frontend/.env.example`)
+- Key: `NEXT_PUBLIC_BACKEND_URL` must point to Render service URL
