@@ -2,6 +2,7 @@ import {
   Injectable,
   ConflictException,
   UnauthorizedException,
+  BadRequestException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
@@ -80,5 +81,30 @@ export class AuthService {
     const displayName = user.username || user.email || googleId;
     const token = this.jwtService.sign({ sub: user.id, username: displayName });
     return { token, user: { id: user.id, username: displayName, role: user.role } };
+  }
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException();
+    if (!user.password) throw new BadRequestException('Password login not available for this account');
+
+    const valid = await bcrypt.compare(currentPassword, user.password);
+    if (!valid) throw new UnauthorizedException('Current password is incorrect');
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await this.prisma.user.update({ where: { id: userId }, data: { password: hashed } });
+    return { ok: true };
+  }
+
+  async changeUsername(userId: string, newUsername: string) {
+    const existing = await this.prisma.user.findUnique({ where: { username: newUsername } });
+    if (existing && existing.id !== userId) throw new ConflictException('Username already taken');
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { username: newUsername },
+    });
+    const token = this.jwtService.sign({ sub: user.id, username: user.username });
+    return { token, user: { id: user.id, username: user.username, role: user.role } };
   }
 }

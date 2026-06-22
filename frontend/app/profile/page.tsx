@@ -5,8 +5,10 @@ import { useRouter } from 'next/navigation';
 import { TiltButton } from '../components/TiltButton';
 import {
   AddProfileModal, DAYS, DAY_COLORS,
-  type ProfileData, type WorkoutScheduleDay, type WorkoutDay, type WorkoutExercise, type WorkoutSet,
+  type ProfileData, type ProfileDraft, type WorkoutScheduleDay, type WorkoutDay, type WorkoutExercise, type WorkoutSet,
 } from './AddProfileModal';
+
+const DRAFT_KEY = 'profile_drafts';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -629,11 +631,14 @@ export default function ProfilePage() {
   const [profiles, setProfiles]     = useState<Profile[]>([]);
   const [activeId, setActiveId]     = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [showAdd, setShowAdd]       = useState(false);
-  const [showImport, setShowImport] = useState(false);
-  const [activeKey, setActiveKey]   = useState('activeProfileId');
-  const [editTarget, setEditTarget] = useState<Profile | null>(null);
-  const [editMode,   setEditMode]   = useState<'equipment' | 'setrep' | null>(null);
+  const [showAdd, setShowAdd]                   = useState(false);
+  const [showImport, setShowImport]             = useState(false);
+  const [drafts, setDrafts]                     = useState<ProfileDraft[]>([]);
+  const [editingDraft, setEditingDraft]         = useState<ProfileDraft | null>(null);
+  const [discardingDraft, setDiscardingDraft]   = useState<ProfileDraft | null>(null);
+  const [activeKey, setActiveKey]       = useState('activeProfileId');
+  const [editTarget, setEditTarget]     = useState<Profile | null>(null);
+  const [editMode,   setEditMode]       = useState<'equipment' | 'setrep' | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -643,6 +648,23 @@ export default function ProfilePage() {
       const key  = `activeProfileId_${user.id ?? 'guest'}`;
       setActiveKey(key);
       setActiveId(localStorage.getItem(key));
+    } catch {}
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setDrafts(parsed);
+      } else {
+        const oldRaw = localStorage.getItem('profile_draft');
+        if (oldRaw) {
+          const old = JSON.parse(oldRaw);
+          if (old && !old.draftId) old.draftId = crypto.randomUUID();
+          const migrated = [old];
+          setDrafts(migrated);
+          localStorage.setItem(DRAFT_KEY, JSON.stringify(migrated));
+          localStorage.removeItem('profile_draft');
+        }
+      }
     } catch {}
     const base = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:3000';
     fetch(`${base}/profiles`, { headers: { Authorization: `Bearer ${token}` } })
@@ -684,8 +706,8 @@ export default function ProfilePage() {
   }, [router]);
 
   if (!ready) return (
-    <div className="min-h-screen flex justify-center">
-      <div className="bg-white w-full max-w-sm flex flex-col px-6 py-8"
+    <div className="min-h-screen flex justify-center bg-red-600">
+      <div className="bg-white w-full sm:max-w-sm flex flex-col px-6 py-8"
         style={{ paddingTop: 'max(32px, env(safe-area-inset-top))', paddingBottom: 'max(32px, env(safe-area-inset-bottom))' }}>
         <div className="skeleton h-3 w-14 mb-8 rounded" />
         <div className="flex flex-col gap-3 mb-6">
@@ -703,6 +725,24 @@ export default function ProfilePage() {
     </div>
   );
 
+  const saveDraft = (d: ProfileDraft) => {
+    setDrafts(prev => {
+      const idx  = prev.findIndex(x => x.draftId === d.draftId);
+      const next = idx >= 0 ? prev.map((x, i) => i === idx ? d : x) : [...prev, d];
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const discardDraft = (draftId: string) => {
+    setDrafts(prev => {
+      const next = prev.filter(d => d.draftId !== draftId);
+      if (next.length === 0) localStorage.removeItem(DRAFT_KEY);
+      else localStorage.setItem(DRAFT_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
   const handleSave = async (data: ProfileData) => {
     let id = crypto.randomUUID();
     try {
@@ -716,7 +756,9 @@ export default function ProfilePage() {
       if (res.ok) { const json = await res.json(); if (json?.id) id = json.id; }
     } catch {}
     setProfiles(prev => [...prev, { id, ...data }]);
+    if (editingDraft) discardDraft(editingDraft.draftId);
     setShowAdd(false);
+    setEditingDraft(null);
     setShowImport(false);
   };
 
@@ -763,8 +805,8 @@ export default function ProfilePage() {
   const existingNames = profiles.map(p => p.name);
 
   return (
-    <div className="min-h-screen flex justify-center">
-      <div className="bg-white w-full max-w-sm flex flex-col px-6 py-8"
+    <div className="min-h-screen flex justify-center bg-red-600">
+      <div className="bg-white w-full sm:max-w-sm flex flex-col px-6 py-8"
         style={{ paddingTop: 'max(32px, env(safe-area-inset-top))', paddingBottom: 'max(32px, env(safe-area-inset-bottom))' }}>
 
         <button
@@ -774,8 +816,36 @@ export default function ProfilePage() {
           &lt; BACK
         </button>
 
-        {profiles.length > 0 && (
+        {(profiles.length > 0 || drafts.length > 0) && (
           <div className="flex flex-col gap-3 mb-6">
+            {drafts.map(d => (
+              <div
+                key={d.draftId}
+                className="rounded-xl overflow-hidden cursor-pointer"
+                style={{ border: '2px dashed #fca5a5', background: '#fff5f5' }}
+                onClick={() => setEditingDraft(d)}
+              >
+                <div className="px-4 py-3 flex items-center justify-between gap-3">
+                  <p className="pixel-font-small text-gray-700 truncate">
+                    {d.name}
+                    <span style={{ color: '#dc2626' }}> (draft)</span>
+                  </p>
+                  <span onClick={e => e.stopPropagation()}>
+                    <TiltButton tile surface="#dc2626" side="#991b1b" textColor="white"
+                      onClick={() => setDiscardingDraft(d)}
+                      className="flex items-center justify-center w-9 h-9"
+                    >
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                        <path d="M10 11v6M14 11v6" />
+                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                      </svg>
+                    </TiltButton>
+                  </span>
+                </div>
+              </div>
+            ))}
             {profiles.map(profile => {
               const isActive   = activeId   === profile.id;
               const isExpanded = expandedId === profile.id;
@@ -823,8 +893,39 @@ export default function ProfilePage() {
 
       </div>
 
+      {discardingDraft && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={e => e.stopPropagation()}>
+          <div className="absolute inset-0 bg-black/50" onClick={() => setDiscardingDraft(null)} />
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl flex flex-col items-center gap-5 mx-6"
+            style={{ padding: '28px 32px', minWidth: 240 }}
+            onClick={e => e.stopPropagation()}
+          >
+            <p className="pixel-font-small tracking-widest text-gray-500" style={{ fontSize: '0.5rem' }}>DISCARD DRAFT</p>
+            <p style={{ fontSize: 14, fontWeight: 600, color: '#111827', textAlign: 'center' }}>{discardingDraft.name}</p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <TiltButton surface="#f3f4f6" side="#d1d5db" textColor="#374151" onClick={() => setDiscardingDraft(null)}>
+                CANCEL
+              </TiltButton>
+              <TiltButton onClick={() => { discardDraft(discardingDraft.draftId); setDiscardingDraft(null); }}>
+                DISCARD
+              </TiltButton>
+            </div>
+          </div>
+        </div>
+      )}
       {showAdd && (
-        <AddProfileModal onClose={() => setShowAdd(false)} onSave={handleSave} profileCount={profiles.length} />
+        <AddProfileModal onClose={() => setShowAdd(false)} onSave={handleSave} onDraft={saveDraft} profileCount={profiles.length} />
+      )}
+      {editingDraft && (
+        <AddProfileModal
+          onClose={() => setEditingDraft(null)}
+          onSave={handleSave}
+          onDraft={saveDraft}
+          profileCount={profiles.length}
+          initialProfile={editingDraft}
+          initialStep={editingDraft.step as 'equipment' | 'schedule' | 'workout' | 'summary'}
+        />
       )}
       {showImport && (
         <ImportModal onClose={() => setShowImport(false)} onImport={handleSave} existingNames={existingNames} />

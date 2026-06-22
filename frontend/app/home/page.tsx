@@ -390,8 +390,8 @@ export default function HomePage() {
   const tileClass = 'aspect-square flex flex-col items-center p-4';
 
   return (
-    <div className="min-h-screen flex justify-center">
-      <div className="bg-white w-full max-w-sm flex flex-col items-center justify-center px-6"
+    <div className="min-h-screen flex justify-center bg-red-600">
+      <div className="bg-white w-full sm:max-w-sm flex flex-col items-center justify-center px-6"
         style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
         <div className="grid grid-cols-2 gap-3 w-full">
 

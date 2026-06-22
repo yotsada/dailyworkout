@@ -147,8 +147,8 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex justify-center">
-      <div className="bg-white w-full max-w-sm flex flex-col items-center justify-center px-6 py-8"
+    <div className="min-h-screen flex justify-center bg-red-600">
+      <div className="bg-white w-full sm:max-w-sm flex flex-col items-center justify-center px-6 py-8"
         style={{ paddingBottom: 'max(32px, env(safe-area-inset-bottom))' }}>
         <Clock />
 

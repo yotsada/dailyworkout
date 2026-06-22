@@ -61,7 +61,7 @@ function EquipmentCard({
           padding: 8, borderRadius: 12,
           border: `2px solid ${active ? '#dc2626' : '#e5e7eb'}`,
           background: active ? '#fef2f2' : '#f9fafb',
-          color: active ? '#dc2626' : '#6b7280',
+          color: '#111827',
           cursor: draggable ? 'grab' : (onClick || onPointerDown) ? 'pointer' : 'default',
           minHeight: CARD_SIZE, width: '100%', aspectRatio: '1 / 1',
           boxSizing: 'border-box', gap: 4,
@@ -98,6 +98,8 @@ export interface WorkoutExercise {
   exerciseId: string;
   exerciseName: string;
   bodyPart?: string;
+  muscle?: string | null;
+  externalId?: string | null;
   sets: WorkoutSet[];
 }
 
@@ -118,12 +120,15 @@ export interface WorkoutScheduleDay {
   bodyParts: string[];
 }
 
+export interface ProfileDraft extends ProfileData { step: string; draftId: string; }
+
 interface AddProfileModalProps {
   onClose: () => void;
   onSave: (profile: ProfileData) => void;
+  onDraft?: (draft: ProfileDraft) => void;
   profileCount: number;
   initialProfile?: ProfileData;
-  initialStep?: 'equipment' | 'workout' | 'summary';
+  initialStep?: 'equipment' | 'schedule' | 'workout' | 'summary';
 }
 
 // ── Schedule step constants ────────────────────────────────────────────────
@@ -136,11 +141,24 @@ const FULL_DAY: Record<string, string> = {
 const BODY_PARTS      = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio'];
 const BODY_PARTS_GRID = ['Rest', ...BODY_PARTS];
 
+const MUSCLE_TO_CATEGORY: Record<string, string> = {
+  'chest': 'Chest',
+  'middle back': 'Back', 'lats': 'Back', 'lower back': 'Back', 'traps': 'Back', 'neck': 'Back',
+  'quadriceps': 'Legs', 'hamstrings': 'Legs', 'glutes': 'Legs', 'calves': 'Legs', 'adductors': 'Legs', 'abductors': 'Legs',
+  'shoulders': 'Shoulders',
+  'biceps': 'Arms', 'triceps': 'Arms', 'forearms': 'Arms',
+  'abdominals': 'Core', 'hip flexors': 'Core',
+};
+
+function normalizeBP(bp: string): string {
+  return MUSCLE_TO_CATEGORY[bp.toLowerCase()] ?? bp;
+}
+
 const WHEEL_H = 208;
 const ROW_H   = 52;
 const CTR_TOP = WHEEL_H / 2 - ROW_H / 2;
 
-const SLOT_W  = 72;
+const SLOT_W  = 96;
 
 export const DAY_COLORS = [
   { surface: '#eab308', side: '#854d0e', light: '#fef9c3', text: '#854d0e' }, // MON yellow
@@ -415,9 +433,9 @@ function DayWheelH({ value, onChange, warnings }: DayWheelHProps) {
             background: c.surface, color: 'white', borderRadius: 10,
             boxShadow: `0 ${shadow}px 0 0 ${c.side}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontWeight: 700, fontSize: 13, letterSpacing: '0.08em',
+            fontWeight: 700, fontSize: 11, letterSpacing: '0.03em',
           }}>
-            {DAYS[dayIdx]}
+            {FULL_DAY[DAYS[dayIdx]]}
             {hasWarn && <span style={{ position: 'absolute', top: 5, right: 5, width: 6, height: 6, borderRadius: '50%', background: 'white', opacity: 0.85 }} />}
           </div>
         </div>
@@ -430,9 +448,9 @@ function DayWheelH({ value, onChange, warnings }: DayWheelHProps) {
             position: 'absolute', left: 6, right: 6, top: 7, bottom: 7,
             background: c.light, color: c.text, borderRadius: 8,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontWeight: 500, fontSize: 11, letterSpacing: '0.04em',
+            fontWeight: 500, fontSize: 9, letterSpacing: '0.02em',
           }}>
-            {DAYS[dayIdx]}
+            {FULL_DAY[DAYS[dayIdx]]}
             {hasWarn && <span style={{ position: 'absolute', top: 4, right: 4, width: 6, height: 6, borderRadius: '50%', background: '#f97316' }} />}
           </div>
         </div>
@@ -445,9 +463,9 @@ function DayWheelH({ value, onChange, warnings }: DayWheelHProps) {
             position: 'absolute', left: 7, right: 7, top: 9, bottom: 9,
             background: c.surface + '28', color: c.side, borderRadius: 6,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontWeight: 500, fontSize: 10, letterSpacing: '0.02em',
+            fontWeight: 500, fontSize: 8, letterSpacing: '0.01em',
           }}>
-            {DAYS[dayIdx]}
+            {FULL_DAY[DAYS[dayIdx]]}
             {hasWarn && <span style={{ position: 'absolute', top: 3, right: 3, width: 5, height: 5, borderRadius: '50%', background: '#f97316' }} />}
           </div>
         </div>
@@ -517,9 +535,17 @@ const adjBtnStyle: React.CSSProperties = {
   flexShrink: 0, color: '#374151', lineHeight: 1,
 };
 
+
+const adjBtnColored = (c: typeof DAY_COLORS[0]): React.CSSProperties => ({
+  ...adjBtnStyle,
+  background: c.light,
+  border: `1px solid ${c.surface}`,
+  color: c.side,
+});
+
 // ── Main modal ─────────────────────────────────────────────────────────────
 
-export function AddProfileModal({ onClose, onSave, profileCount, initialProfile, initialStep }: AddProfileModalProps) {
+export function AddProfileModal({ onClose, onSave, onDraft, profileCount, initialProfile, initialStep }: AddProfileModalProps) {
   // Equipment step
   const [name, setName]             = useState(initialProfile?.name ?? `Profile ${profileCount + 1}`);
   const [search, setSearch]         = useState('');
@@ -528,22 +554,29 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
   const [allEquipment, setAllEquipment]       = useState<EquipmentItem[]>([]);
   const [loadingEquipment, setLoadingEquipment] = useState(true);
   const [step, setStep]             = useState<'equipment' | 'schedule' | 'workout' | 'summary'>(initialStep ?? 'equipment');
+  const [draftId] = useState(() => {
+    if (initialProfile && 'draftId' in initialProfile) return (initialProfile as ProfileDraft).draftId;
+    return crypto.randomUUID();
+  });
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
 
   // Schedule step
   const [schedule, setSchedule] = useState<Record<string, string[]>>(() => {
     if (initialProfile?.schedule) {
       return Object.fromEntries((initialProfile.schedule as WorkoutScheduleDay[]).map(d => [d.day, d.bodyParts]));
     }
-    return { MON: ['Chest', 'Arms'], WED: ['Back'], FRI: ['Legs'] };
+    return {};
   });
-  const [wheelDayIdx, setWheelDayIdx]     = useState(0);
-  const [bodyDropActive, setBodyDropActive] = useState(false);
+  const [editingDay, setEditingDay] = useState<string | null>(null);
 
   // Workout step
   const [workoutDayIdx, setWorkoutDayIdx] = useState(0);
   const [workout, setWorkout] = useState<Record<string, WorkoutExercise[]>>(() => {
     if (initialProfile?.workout) {
-      return Object.fromEntries((initialProfile.workout as WorkoutDay[]).map(d => [d.day, d.exercises]));
+      return Object.fromEntries((initialProfile.workout as WorkoutDay[]).map(d => [
+        d.day,
+        d.exercises.map(ex => ({ ...ex, bodyPart: ex.bodyPart ? normalizeBP(ex.bodyPart) : ex.bodyPart })),
+      ]));
     }
     return {};
   });
@@ -551,19 +584,13 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
   const [bpExercises, setBpExercises] = useState<ExerciseItem[]>([]);
   const [loadingExercises, setLoadingExercises] = useState(false);
   const [workoutWarnVisible, setWorkoutWarnVisible] = useState(false);
+  const [exerciseSearch, setExerciseSearch] = useState('');
 
   // Equipment touch drag
-  const equipDropRef  = useRef<HTMLDivElement>(null);
-  const equipGhostRef = useRef<HTMLDivElement | null>(null);
-  const equipDragRef  = useRef<{ id: string; startX: number; startY: number; dragging: boolean } | null>(null);
+  const equipDropRef      = useRef<HTMLDivElement>(null);
+  const equipGhostRef     = useRef<HTMLDivElement | null>(null);
+  const equipDragRef      = useRef<{ id: string; startX: number; startY: number; dragging: boolean } | null>(null);
 
-  // Body part touch drag
-  const bodyDropRef  = useRef<HTMLDivElement>(null);
-  const bodyGhostRef = useRef<HTMLDivElement | null>(null);
-  const bodyDragRef  = useRef<{ part: string; startX: number; startY: number; dragging: boolean } | null>(null);
-
-  const selectedDay       = DAYS[wheelDayIdx];
-  const selectedBodyParts = schedule[selectedDay] ?? [];
 
   const workoutDay         = DAYS[workoutDayIdx];
   const workoutBodyParts   = schedule[workoutDay] ?? [];
@@ -593,7 +620,7 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
   }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset activeBP when changing workout day
-  useEffect(() => { setActiveBP(null); setBpExercises([]); }, [workoutDayIdx]);
+  useEffect(() => { setActiveBP(null); setBpExercises([]); setExerciseSearch(''); }, [workoutDayIdx]);
 
   const bodyItem    = allEquipment.find(e => e.name.toLowerCase() === 'body');
   const nonBodyList = allEquipment.filter(e => e.name.toLowerCase() !== 'body');
@@ -657,56 +684,8 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
     setEquipDropActive(false);
   };
 
-  // ── Body part drag handlers ──────────────────────────────────────────────
 
-  const handleBodyDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    if (e.dataTransfer.types.includes('text/plain')) {
-      e.dataTransfer.dropEffect = 'copy';
-      setBodyDropActive(true);
-    }
-  };
-  const handleBodyDrop = (e: React.DragEvent) => {
-    e.preventDefault(); setBodyDropActive(false);
-    const part = e.dataTransfer.getData('text/plain');
-    if (BODY_PARTS.includes(part)) togglePart(selectedDay, part);
-  };
 
-  const onBodyPD = (e: React.PointerEvent, part: string) => {
-    if (e.pointerType === 'mouse') return;
-    (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    bodyDragRef.current = { part, startX: e.clientX, startY: e.clientY, dragging: false };
-  };
-
-  const onBodyPM = (e: React.PointerEvent) => {
-    const d = bodyDragRef.current;
-    if (!d || d.part === 'Rest') return;
-    if (!d.dragging && Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 15) {
-      d.dragging = true;
-      bodyGhostRef.current = makeGhost(d.part.toUpperCase());
-    }
-    if (bodyGhostRef.current) {
-      moveGhost(bodyGhostRef.current, e.clientX, e.clientY);
-      setBodyDropActive(isOverZone(bodyDropRef.current, e.clientX, e.clientY));
-    }
-  };
-
-  const onBodyPU = (e: React.PointerEvent) => {
-    const d = bodyDragRef.current;
-    if (!d) return;
-    bodyDragRef.current = null;
-    if (bodyGhostRef.current) { document.body.removeChild(bodyGhostRef.current); bodyGhostRef.current = null; }
-    if (d.dragging && isOverZone(bodyDropRef.current, e.clientX, e.clientY)) {
-      togglePart(selectedDay, d.part);
-    }
-    setBodyDropActive(false);
-  };
-
-  const onBodyPC = () => {
-    if (bodyGhostRef.current) { document.body.removeChild(bodyGhostRef.current); bodyGhostRef.current = null; }
-    bodyDragRef.current = null;
-    setBodyDropActive(false);
-  };
 
   // ── Profile helpers ──────────────────────────────────────────────────────
 
@@ -717,6 +696,28 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
       .map(id => allEquipment.find(e => e.id === id)?.name)
       .filter((n): n is string => Boolean(n));
     return { name: name.trim(), equipment: [bodyName, ...selectedNames] };
+  };
+
+  const handleClose = () => {
+    if (onDraft) {
+      const hasContent = name !== `Profile ${profileCount + 1}`
+        || selected.size > 0
+        || Object.values(schedule).some(v => v.length > 0)
+        || Object.values(workout).some(v => v.length > 0);
+      if (hasContent) {
+        setShowCloseConfirm(true);
+        return;
+      }
+    }
+    onClose();
+  };
+
+  const saveDraftAndClose = () => {
+    const bodyName   = bodyItem?.name ?? 'Body';
+    const equipNames = [bodyName, ...Array.from(selected).map(id => allEquipment.find(e => e.id === id)?.name).filter(Boolean) as string[]];
+    onDraft!({ name, equipment: equipNames, schedule: DAYS.map(d => ({ day: d, bodyParts: schedule[d] ?? [] })), workout: DAYS.map(d => ({ day: d, exercises: workout[d] ?? [] })), step, draftId });
+    setShowCloseConfirm(false);
+    onClose();
   };
 
   const handleNextToSchedule = () => { if (getProfileDraft()) setStep('schedule'); };
@@ -754,7 +755,6 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
     }
   };
 
-  const clearAll = () => setSchedule({});
 
   // ── Workout mutations ────────────────────────────────────────────────────
 
@@ -794,9 +794,14 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
     if (allMissingAssignments.length === 0) setWorkoutWarnVisible(false);
   }, [allMissingAssignments]);
 
+  const filteredBpExercises = useMemo(
+    () => bpExercises.filter(ex => ex.name.toUpperCase().includes(exerciseSearch.toUpperCase())),
+    [bpExercises, exerciseSearch],
+  );
+
   const handleSelectBP = (bp: string) => {
-    if (activeBP === bp) { setActiveBP(null); setBpExercises([]); return; }
     setActiveBP(bp);
+    setExerciseSearch('');
     setBpExercises([]);
     setLoadingExercises(true);
     const base = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:3000';
@@ -808,6 +813,7 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
   };
 
   const addExercise = (ex: ExerciseItem) => {
+    const defaultRest = Math.max(0, parseInt(localStorage.getItem('setting_defaultRest') ?? '60', 10) || 60);
     setWorkout(prev => {
       const cur = prev[workoutDay] ?? [];
       if (cur.some(e => e.exerciseId === ex.id)) return prev;
@@ -817,8 +823,9 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
         [workoutDay]: [...cur, {
           exerciseId: ex.id,
           exerciseName: ex.name,
-          bodyPart: ex.bodyPart,
-          sets: [{ repType, reps: repType === 'time' ? 30 : 10, restSeconds: 60 }],
+          bodyPart: activeBP ?? normalizeBP(ex.bodyPart ?? ''),
+          muscle: ex.bodyPart ?? null,
+          sets: [{ repType, reps: repType === 'time' ? 30 : 10, restSeconds: defaultRest }],
         }],
       };
     });
@@ -827,56 +834,36 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
   const removeExercise = (day: string, exIdx: number) =>
     setWorkout(prev => ({ ...prev, [day]: (prev[day] ?? []).filter((_, i) => i !== exIdx) }));
 
-  const addSet = (day: string, exIdx: number) =>
+  const changeSetCount = (day: string, exIdx: number, delta: number) =>
     setWorkout(prev => {
       const exs = [...(prev[day] ?? [])];
       const ex  = { ...exs[exIdx] };
-      const last = ex.sets[ex.sets.length - 1] ?? { repType: 'count' as const, reps: 10, restSeconds: 60 };
-      ex.sets = [...ex.sets, { ...last }];
+      if (delta > 0) {
+        const last = ex.sets[ex.sets.length - 1] ?? { repType: 'count' as const, reps: 10, restSeconds: 60 };
+        ex.sets = [...ex.sets, { ...last }];
+      } else if (ex.sets.length > 1) {
+        ex.sets = ex.sets.slice(0, -1);
+      }
       exs[exIdx] = ex;
       return { ...prev, [day]: exs };
     });
 
-  const removeSet = (day: string, exIdx: number, setIdx: number) =>
+  const adjustAllReps = (day: string, exIdx: number, delta: number) =>
     setWorkout(prev => {
       const exs = [...(prev[day] ?? [])];
       const ex  = { ...exs[exIdx] };
-      if (ex.sets.length <= 1) return prev;
-      ex.sets = ex.sets.filter((_, i) => i !== setIdx);
+      const newReps = Math.max(1, (ex.sets[0]?.reps ?? 10) + delta);
+      ex.sets = ex.sets.map(s => ({ ...s, reps: newReps }));
       exs[exIdx] = ex;
       return { ...prev, [day]: exs };
     });
 
-  const toggleRepType = (day: string, exIdx: number, setIdx: number) =>
+  const adjustAllRest = (day: string, exIdx: number, delta: number) =>
     setWorkout(prev => {
-      const exs  = [...(prev[day] ?? [])];
-      const ex   = { ...exs[exIdx] };
-      const sets = [...ex.sets];
-      const s    = sets[setIdx];
-      sets[setIdx] = { ...s, repType: s.repType === 'count' ? 'time' : 'count', reps: s.repType === 'count' ? 30 : 10 };
-      ex.sets = sets;
-      exs[exIdx] = ex;
-      return { ...prev, [day]: exs };
-    });
-
-  const adjustReps = (day: string, exIdx: number, setIdx: number, delta: number) =>
-    setWorkout(prev => {
-      const exs  = [...(prev[day] ?? [])];
-      const ex   = { ...exs[exIdx] };
-      const sets = [...ex.sets];
-      sets[setIdx] = { ...sets[setIdx], reps: Math.max(1, sets[setIdx].reps + delta) };
-      ex.sets = sets;
-      exs[exIdx] = ex;
-      return { ...prev, [day]: exs };
-    });
-
-  const adjustRest = (day: string, exIdx: number, setIdx: number, delta: number) =>
-    setWorkout(prev => {
-      const exs  = [...(prev[day] ?? [])];
-      const ex   = { ...exs[exIdx] };
-      const sets = [...ex.sets];
-      sets[setIdx] = { ...sets[setIdx], restSeconds: Math.max(0, sets[setIdx].restSeconds + delta) };
-      ex.sets = sets;
+      const exs = [...(prev[day] ?? [])];
+      const ex  = { ...exs[exIdx] };
+      const newRest = Math.max(0, (ex.sets[0]?.restSeconds ?? 60) + delta);
+      ex.sets = ex.sets.map(s => ({ ...s, restSeconds: newRest }));
       exs[exIdx] = ex;
       return { ...prev, [day]: exs };
     });
@@ -884,19 +871,14 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-
-      <div
-        className="relative bg-white w-full sm:max-w-sm sm:mx-4 sm:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl"
-        style={{ height: '90dvh' }}
-        onClick={e => e.stopPropagation()}
-      >
+    <div
+      className="fixed inset-0 z-50 bg-white flex flex-col overflow-hidden"
+      onClick={e => e.stopPropagation()}
+    >
         {/* Drag handle + close */}
         <div className="flex items-center justify-between px-4 pt-3 pb-1">
-          <div className="sm:hidden w-10 h-1 rounded-full bg-gray-300 mx-auto" />
           <button
-            type="button" onClick={onClose}
+            type="button" onClick={handleClose}
             className="ml-auto flex items-center justify-center rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
             style={{ width: 32, height: 32 }}
           >
@@ -929,11 +911,12 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
                 onDragLeave={() => setEquipDropActive(false)}
                 onDrop={handleEquipDrop}
                 style={{
-                  minHeight: 96, borderRadius: 12,
+                  height: CARD_SIZE * 2 + 52, borderRadius: 12,
                   border: `2px dashed ${equipDropActive ? '#dc2626' : '#d1d5db'}`,
                   background: equipDropActive ? '#fff5f5' : '#fafafa',
                   display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-                  gap: 8, padding: 8,
+                  alignContent: 'start',
+                  gap: 8, padding: 8, overflowY: 'auto',
                   transition: 'border-color 0.15s ease, background-color 0.15s ease',
                 }}
               >
@@ -941,7 +924,14 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
                 {Array.from(selected).map(id => {
                   const eq = allEquipment.find(e => e.id === id);
                   if (!eq) return null;
-                  return <EquipmentCard key={id} label={eq.name.toUpperCase()} active onRemove={() => removeEquip(id)} />;
+                  return (
+                    <EquipmentCard
+                      key={id}
+                      label={eq.name.toUpperCase()}
+                      active
+                      onClick={() => removeEquip(id)}
+                    />
+                  );
                 })}
                 {selected.size === 0 && !equipDropActive && (
                   <span
@@ -1011,96 +1001,59 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
 
         ) : step === 'schedule' ? (
           /* ── Step 2: Schedule ────────────────────────────────────────── */
-          <div className="flex flex-col flex-1 min-h-0 pt-1 gap-0">
+          <div className="flex flex-col flex-1 min-h-0 pt-1">
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '8px 16px 0', gap: 6 }}>
+              {DAYS.map((day, di) => {
+                const parts  = schedule[day] ?? [];
+                const isRest = parts.length === 0;
+                const c      = DAY_COLORS[di];
+                return (
+                  <div
+                    key={day}
+                    onClick={() => setEditingDay(day)}
+                    style={{
+                      flex: 1, display: 'flex', alignItems: 'center', gap: 12,
+                      padding: '0 14px', borderRadius: 14, cursor: 'pointer',
+                      background: isRest ? '#fafafa' : c.light,
+                      border: `1.5px solid ${isRest ? '#f0f0f0' : c.surface + '55'}`,
+                    }}
+                  >
+                    {/* Day badge */}
+                    <div style={{
+                      flexShrink: 0, width: 52, height: 34, borderRadius: 8,
+                      background: isRest ? '#e5e7eb' : c.surface,
+                      boxShadow: isRest ? 'none' : `0 3px 0 0 ${c.side}`,
+                      color: isRest ? '#9ca3af' : 'white',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 12, fontWeight: 700, letterSpacing: '0.06em',
+                    }}>{day}</div>
 
-            <DayWheelH value={wheelDayIdx} onChange={setWheelDayIdx} />
+                    {/* Body part chips */}
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      {isRest
+                        ? <span style={{ fontSize: 12, color: '#d1d5db', fontWeight: 500, letterSpacing: '0.04em' }}>REST</span>
+                        : parts.map(p => (
+                            <span key={p} style={{
+                              padding: '4px 12px', borderRadius: 20,
+                              background: c.surface, color: 'white',
+                              fontSize: 11, fontWeight: 600,
+                              boxShadow: `0 2px 0 0 ${c.side}`,
+                            }}>{p}</span>
+                          ))
+                      }
+                    </div>
 
-            <div className="flex flex-col flex-1 min-h-0 overflow-y-auto px-6 pt-4 pb-4 gap-4">
-
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontWeight: 500, fontSize: 15, color: '#111827' }}>My week</span>
-                <button
-                  type="button" onClick={clearAll}
-                  style={{ fontSize: 13, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}
-                >
-                  Clear
-                </button>
-              </div>
-
-              <div
-                ref={bodyDropRef}
-                onDragOver={handleBodyDragOver}
-                onDragLeave={() => setBodyDropActive(false)}
-                onDrop={handleBodyDrop}
-                style={{
-                  minHeight: 96, borderRadius: 12,
-                  border: `0.5px ${bodyDropActive ? 'dashed' : 'solid'} ${bodyDropActive ? '#dc2626' : '#e5e7eb'}`,
-                  background: bodyDropActive ? '#fff5f5' : '#fafafa',
-                  padding: 12, display: 'flex', flexDirection: 'column', gap: 8,
-                  transition: 'border-color 0.12s, background 0.12s',
-                  boxSizing: 'border-box',
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: 500, fontSize: 14, color: '#111827' }}>{FULL_DAY[selectedDay]}</div>
-                  <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 1 }}>
-                    {selectedBodyParts.length === 0 ? 'Rest day' : `${selectedBodyParts.length} part${selectedBodyParts.length > 1 ? 's' : ''}`}
+                    {/* Edit pencil */}
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+                      stroke={isRest ? '#d1d5db' : c.side} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                      style={{ flexShrink: 0 }}
+                    >
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
                   </div>
-                </div>
-                {selectedBodyParts.length === 0 ? (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <span style={{ fontSize: 11, color: '#d1d5db' }}>Drag or tap to add</span>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                    {selectedBodyParts.map(part => (
-                      <button
-                        key={part}
-                        type="button"
-                        onClick={() => togglePart(selectedDay, part)}
-                        style={{
-                          display: 'inline-flex', alignItems: 'center', gap: 3,
-                          padding: '4px 8px 4px 10px', borderRadius: 999,
-                          background: '#fef2f2', color: '#dc2626',
-                          fontSize: 12, fontWeight: 500,
-                          border: '0.5px solid #fecaca',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {part}
-                        <span style={{ opacity: 0.45, fontSize: 15, lineHeight: 1 }}>×</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-2 flex-1 min-h-0">
-                <label className="pixel-font-small tracking-widest text-gray-500">BODY PART</label>
-                <div className="flex-1 overflow-y-auto min-h-0">
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8, paddingBlock: 2 }}>
-                    {BODY_PARTS_GRID.map(part => {
-                      const isRest = part === 'Rest';
-                      const active = isRest ? selectedBodyParts.length === 0 : selectedBodyParts.includes(part);
-                      return (
-                        <EquipmentCard
-                          key={part}
-                          label={part.toUpperCase()}
-                          active={active}
-                          draggable={!isRest && !active}
-                          onClick={() => togglePart(selectedDay, part)}
-                          onDragStart={!isRest && !active ? e => { e.dataTransfer.setData('text/plain', part); e.dataTransfer.effectAllowed = 'copy'; } : undefined}
-                          onPointerDown={e => onBodyPD(e, part)}
-                          onPointerMove={onBodyPM}
-                          onPointerUp={onBodyPU}
-                          onPointerCancel={onBodyPC}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
+                );
+              })}
             </div>
 
             <div className="flex justify-between shrink-0 px-6 pb-6 pt-3" style={{ borderTop: '0.5px solid #f3f4f6' }}>
@@ -1136,84 +1089,32 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
             {/* Scrollable content */}
             <div className="flex flex-col flex-1 min-h-0 overflow-y-auto px-6 pt-4 pb-4 gap-4">
 
-              {/* Day header */}
-              <div>
-                <div style={{ fontWeight: 500, fontSize: 15, color: '#111827' }}>{FULL_DAY[workoutDay]}</div>
-                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
-                  {workoutBodyParts.length === 0 ? 'Rest day — no exercises' : workoutBodyParts.join(' · ')}
-                </div>
-              </div>
-
               {workoutBodyParts.length > 0 && (
                 <>
-                  {/* Body part filter pills */}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {/* Body part filter cards */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
                     {workoutBodyParts.map(bp => {
                       const isMissing = missingBPsForCurrentDay.includes(bp);
                       return (
-                        <button
-                          key={bp}
-                          type="button"
-                          onClick={() => handleSelectBP(bp)}
-                          style={{
-                            display: 'inline-flex', alignItems: 'center', gap: 4,
-                            padding: '4px 12px', borderRadius: 999,
-                            background: activeBP === bp ? '#dc2626' : '#f9fafb',
-                            color: activeBP === bp ? 'white' : '#374151',
-                            border: `1px solid ${activeBP === bp ? '#dc2626' : isMissing ? '#f97316' : '#e5e7eb'}`,
-                            fontSize: 12, fontWeight: 500, cursor: 'pointer',
-                            transition: 'background 0.12s, color 0.12s',
-                          }}
-                        >
-                          {bp}
+                        <div key={bp} style={{ position: 'relative' }}>
+                          <EquipmentCard
+                            label={bp.toUpperCase()}
+                            active={activeBP === bp}
+                            onClick={() => handleSelectBP(bp)}
+                          />
                           {isMissing && (
                             <span style={{
-                              width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
-                              background: activeBP === bp ? 'rgba(255,255,255,0.75)' : '#f97316',
+                              position: 'absolute', top: 4, right: 4,
+                              width: 11, height: 11, borderRadius: '50%',
+                              background: '#dc2626', border: '2px solid white',
+                              pointerEvents: 'none',
                             }} />
                           )}
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
 
-                  {/* Exercise picker */}
-                  {activeBP && (
-                    <div style={{ background: '#fafafa', borderRadius: 10, padding: 10, border: '0.5px solid #e5e7eb' }}>
-                      {loadingExercises ? (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                          {[70, 90, 60, 80, 65, 75].map((w, i) => (
-                            <div key={i} className="skeleton" style={{ height: 26, width: w, borderRadius: 999 }} />
-                          ))}
-                        </div>
-                      ) : bpExercises.length === 0 ? (
-                        <span style={{ fontSize: 11, color: '#9ca3af' }}>No exercises found</span>
-                      ) : (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                          {bpExercises.map(ex => {
-                            const already = workoutExercises.some(e => e.exerciseId === ex.id);
-                            return (
-                              <button
-                                key={ex.id}
-                                type="button"
-                                onClick={() => !already && addExercise(ex)}
-                                style={{
-                                  padding: '4px 10px', borderRadius: 999,
-                                  background: already ? '#f3f4f6' : '#fef2f2',
-                                  color: already ? '#9ca3af' : '#dc2626',
-                                  border: `0.5px solid ${already ? '#e5e7eb' : '#fecaca'}`,
-                                  fontSize: 12, cursor: already ? 'default' : 'pointer',
-                                  textDecoration: already ? 'line-through' : 'none',
-                                }}
-                              >
-                                {ex.name}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </>
               )}
 
@@ -1227,92 +1128,76 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
                   return acc;
                 }, []);
                 return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {grouped.map(group => (
                     <div key={group.bp}>
                       {group.bp && (
-                        <div style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', letterSpacing: '0.1em', padding: '8px 0 4px' }}>
-                          {group.bp.toUpperCase()}
+                        <div style={{ paddingBottom: 8 }}>
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center',
+                            padding: '3px 10px', borderRadius: 6,
+                            background: '#fef2f2', color: '#dc2626',
+                            fontSize: 11, fontWeight: 700, letterSpacing: '0.06em',
+                          }}>
+                            {group.bp.toUpperCase()}
+                          </span>
                         </div>
                       )}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {group.items.map(({ ex, exIdx }) => (
-                    <div key={ex.exerciseId} style={{ borderRadius: 10, border: '0.5px solid #e5e7eb', overflow: 'hidden' }}>
-                      {/* Exercise header */}
+                    <div key={ex.exerciseId} style={{ borderRadius: 10, border: '0.5px solid #e5e7eb', overflow: 'hidden', background: 'white' }}>
                       <div style={{
                         background: '#fafafa', padding: '8px 12px',
                         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                         borderBottom: '0.5px solid #f3f4f6',
                       }}>
-                        <span style={{ fontSize: 13, fontWeight: 500, color: '#111827' }}>{ex.exerciseName}</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                          <span style={{
+                            alignSelf: 'flex-start', padding: '2px 8px', borderRadius: 6,
+                            background: '#dc2626', color: 'white',
+                            fontSize: 9, fontWeight: 600, letterSpacing: '0.04em',
+                          }} className="pixel-font-small">{ex.exerciseName.toUpperCase()}</span>
+                          {ex.muscle && (
+                            <span style={{
+                              alignSelf: 'flex-start', padding: '1px 6px', borderRadius: 4,
+                              background: '#dc2626', color: 'white',
+                              fontSize: 9, fontWeight: 600, letterSpacing: '0.04em',
+                            }} className="pixel-font-small">{ex.muscle.toUpperCase()}</span>
+                          )}
+                        </div>
                         <button
                           type="button" onClick={() => removeExercise(workoutDay, exIdx)}
                           style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: 0 }}
                         >×</button>
                       </div>
-
-                      {/* Header row */}
-                      <div style={{ padding: '4px 12px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: '0.5px solid #f3f4f6' }}>
-                        <span style={{ fontSize: 10, color: '#9ca3af', width: 24, flexShrink: 0 }}></span>
-                        <span style={{ fontSize: 10, color: '#9ca3af', width: 40, flexShrink: 0 }}>TYPE</span>
-                        <span style={{ fontSize: 10, color: '#9ca3af', flex: 1, textAlign: 'center' }}>REPS / SEC</span>
-                        <span style={{ fontSize: 10, color: '#9ca3af', minWidth: 64, textAlign: 'center' }}>REST</span>
-                        <span style={{ width: 18 }} />
-                      </div>
-
-                      {/* Sets */}
-                      {ex.sets.map((set, setIdx) => (
-                        <div key={setIdx} style={{
-                          padding: '6px 12px', borderBottom: '0.5px solid #f3f4f6',
-                          display: 'flex', alignItems: 'center', gap: 8,
-                        }}>
-                          <span style={{ fontSize: 11, color: '#9ca3af', width: 24, flexShrink: 0 }}>S{setIdx + 1}</span>
-
-                          {/* Rep type label (fixed per exercise) */}
-                          <span style={{
-                            fontSize: 9, padding: '2px 5px', borderRadius: 4, width: 40, textAlign: 'center',
-                            background: set.repType === 'count' ? '#dbeafe' : '#dcfce7',
-                            color: set.repType === 'count' ? '#1d4ed8' : '#16a34a',
-                            fontWeight: 600,
-                          }}>
-                            {set.repType === 'count' ? 'REPS' : 'TIME'}
-                          </span>
-
-                          {/* Reps / duration */}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 3, flex: 1, justifyContent: 'center' }}>
-                            <button type="button" onClick={() => adjustReps(workoutDay, exIdx, setIdx, -1)} style={adjBtnStyle}>−</button>
-                            <span style={{ fontSize: 12, minWidth: 28, textAlign: 'center', fontWeight: 500 }}>
-                              {set.repType === 'count' ? set.reps : `${set.reps}s`}
-                            </span>
-                            <button type="button" onClick={() => adjustReps(workoutDay, exIdx, setIdx, 1)} style={adjBtnStyle}>+</button>
+                      <div style={{ padding: '10px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
+                          <span style={{ fontSize: 9, color: '#9ca3af', fontWeight: 600, letterSpacing: '0.06em' }}>SETS</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                            <button type="button" onClick={() => changeSetCount(workoutDay, exIdx, -1)} style={adjBtnStyle}>−</button>
+                            <span style={{ fontSize: 12, minWidth: 24, textAlign: 'center', fontWeight: 500 }}>{ex.sets.length}</span>
+                            <button type="button" onClick={() => changeSetCount(workoutDay, exIdx, 1)} style={adjBtnStyle}>+</button>
                           </div>
-
-                          {/* Rest */}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 3, minWidth: 64, justifyContent: 'center' }}>
-                            <button type="button" onClick={() => adjustRest(workoutDay, exIdx, setIdx, -15)} style={adjBtnStyle}>−</button>
-                            <span style={{ fontSize: 12, minWidth: 28, textAlign: 'center' }}>{set.restSeconds}s</span>
-                            <button type="button" onClick={() => adjustRest(workoutDay, exIdx, setIdx, 15)} style={adjBtnStyle}>+</button>
-                          </div>
-
-                          {/* Remove set */}
-                          <button
-                            type="button" onClick={() => removeSet(workoutDay, exIdx, setIdx)}
-                            style={{ color: '#d1d5db', background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, lineHeight: 1, width: 18, padding: 0 }}
-                          >×</button>
                         </div>
-                      ))}
-
-                      {/* Add set */}
-                      <button
-                        type="button" onClick={() => addSet(workoutDay, exIdx)}
-                        style={{
-                          display: 'block', width: '100%', textAlign: 'left',
-                          padding: '6px 12px', fontSize: 11, color: '#dc2626',
-                          background: 'none', border: 'none', cursor: 'pointer',
-                        }}
-                      >
-                        + Set
-                      </button>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
+                          <span style={{ fontSize: 9, color: '#9ca3af', fontWeight: 600, letterSpacing: '0.06em' }}>
+                            {ex.sets[0]?.repType === 'time' ? 'SEC' : 'REPS'}
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                            <button type="button" onClick={() => adjustAllReps(workoutDay, exIdx, -1)} style={adjBtnStyle}>−</button>
+                            <span style={{ fontSize: 12, minWidth: 24, textAlign: 'center', fontWeight: 500 }}>{ex.sets[0]?.reps ?? 10}</span>
+                            <button type="button" onClick={() => adjustAllReps(workoutDay, exIdx, 1)} style={adjBtnStyle}>+</button>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
+                          <span style={{ fontSize: 9, color: '#9ca3af', fontWeight: 600, letterSpacing: '0.06em' }}>REST</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                            <button type="button" onClick={() => adjustAllRest(workoutDay, exIdx, -15)} style={adjBtnStyle}>−</button>
+                            <span style={{ fontSize: 12, minWidth: 32, textAlign: 'center' }}>{ex.sets[0]?.restSeconds ?? 60}s</span>
+                            <button type="button" onClick={() => adjustAllRest(workoutDay, exIdx, 15)} style={adjBtnStyle}>+</button>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                       ))}
                       </div>
@@ -1373,6 +1258,7 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
                 </svg>
               </button>
             </div>
+
           </div>
 
         ) : (
@@ -1405,60 +1291,88 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
                       }
                     </div>
 
-                    {/* Exercise cards */}
-                    {exs.length > 0 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {exs.map((ex, exIdx) => (
-                          <div key={ex.exerciseId} style={{ borderRadius: 10, border: '0.5px solid #e5e7eb', overflow: 'hidden' }}>
-                            {/* Exercise header */}
-                            <div style={{ background: '#fafafa', padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '0.5px solid #f3f4f6' }}>
-                              <span style={{ fontSize: 13, fontWeight: 500, color: '#111827' }}>{ex.exerciseName}</span>
-                              <button type="button" onClick={() => removeExercise(day, exIdx)}
-                                style={{ color: '#d1d5db', background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
-                            </div>
-
-                            {/* Column headers */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '32px 1fr 1fr 18px', gap: 4, padding: '6px 12px 2px', alignItems: 'center' }}>
-                              <span style={{ fontSize: 10, color: '#9ca3af' }} />
-                              <span style={{ fontSize: 10, color: '#9ca3af', textAlign: 'center' }}>Reps / Time</span>
-                              <span style={{ fontSize: 10, color: '#9ca3af', textAlign: 'center' }}>Rest</span>
-                              <span />
-                            </div>
-
-                            {/* Set rows */}
-                            {ex.sets.map((set, setIdx) => (
-                              <div key={setIdx} style={{ display: 'grid', gridTemplateColumns: '32px 1fr 1fr 18px', gap: 4, padding: '4px 12px', alignItems: 'center' }}>
-                                <span style={{
-                                  fontSize: 10, borderRadius: 4, padding: '2px 4px', textAlign: 'center',
-                                  background: set.repType === 'count' ? '#dbeafe' : '#dcfce7',
-                                  color: set.repType === 'count' ? '#1d4ed8' : '#16a34a', fontWeight: 600,
-                                }}>{set.repType === 'count' ? 'reps' : 'time'}</span>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
-                                  <button type="button" style={adjBtnStyle} onClick={() => adjustReps(day, exIdx, setIdx, -1)}>−</button>
-                                  <span style={{ fontSize: 12, minWidth: 32, textAlign: 'center', fontWeight: 500 }}>
-                                    {set.repType === 'count' ? set.reps : `${set.reps}s`}
+                    {/* Exercise cards grouped by body part */}
+                    {exs.length > 0 && (() => {
+                      const grouped = exs.reduce<{ bp: string; items: { ex: typeof exs[0]; exIdx: number }[] }[]>((acc, ex, exIdx) => {
+                        const bp = ex.bodyPart ?? '';
+                        const g = acc.find(x => x.bp === bp);
+                        if (g) g.items.push({ ex, exIdx });
+                        else acc.push({ bp, items: [{ ex, exIdx }] });
+                        return acc;
+                      }, []);
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {grouped.map(group => (
+                            <div key={group.bp}>
+                              {group.bp && (
+                                <div style={{ paddingBottom: 8 }}>
+                                  <span style={{
+                                    display: 'inline-flex', alignItems: 'center',
+                                    padding: '3px 10px', borderRadius: 6,
+                                    background: '#fef2f2', color: '#dc2626',
+                                    fontSize: 11, fontWeight: 700, letterSpacing: '0.06em',
+                                  }}>
+                                    {group.bp.toUpperCase()}
                                   </span>
-                                  <button type="button" style={adjBtnStyle} onClick={() => adjustReps(day, exIdx, setIdx, 1)}>+</button>
                                 </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
-                                  <button type="button" style={adjBtnStyle} onClick={() => adjustRest(day, exIdx, setIdx, -15)}>−</button>
-                                  <span style={{ fontSize: 12, minWidth: 32, textAlign: 'center' }}>{set.restSeconds}s</span>
-                                  <button type="button" style={adjBtnStyle} onClick={() => adjustRest(day, exIdx, setIdx, 15)}>+</button>
-                                </div>
-                                <button type="button" onClick={() => removeSet(day, exIdx, setIdx)}
-                                  style={{ color: '#d1d5db', background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: 0, justifySelf: 'center' }}>×</button>
+                              )}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                {group.items.map(({ ex, exIdx }) => (
+                                  <div key={ex.exerciseId} style={{ borderRadius: 10, border: `1.5px solid ${c.surface}`, overflow: 'hidden', background: 'white' }}>
+                                    <div style={{ background: 'white', padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${c.surface}40` }}>
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                        <span style={{
+                                          alignSelf: 'flex-start', padding: '2px 8px', borderRadius: 6,
+                                          background: '#dc2626', color: 'white',
+                                          fontSize: 9, fontWeight: 600, letterSpacing: '0.04em',
+                                        }} className="pixel-font-small">{ex.exerciseName.toUpperCase()}</span>
+                                        {ex.muscle && (
+                                          <span style={{
+                                            alignSelf: 'flex-start', padding: '1px 6px', borderRadius: 4,
+                                            background: '#dc2626', color: 'white',
+                                            fontSize: 9, fontWeight: 600, letterSpacing: '0.04em',
+                                          }} className="pixel-font-small">{ex.muscle.toUpperCase()}</span>
+                                        )}
+                                      </div>
+                                      <button type="button" onClick={() => removeExercise(day, exIdx)}
+                                        style={{ color: c.side, background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
+                                    </div>
+                                    <div style={{ padding: '10px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
+                                        <span style={{ fontSize: 9, color: c.side, fontWeight: 600, letterSpacing: '0.06em' }}>SETS</span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                                          <button type="button" style={adjBtnColored(c)} onClick={() => changeSetCount(day, exIdx, -1)}>−</button>
+                                          <span style={{ fontSize: 12, minWidth: 24, textAlign: 'center', fontWeight: 500, color: c.text }}>{ex.sets.length}</span>
+                                          <button type="button" style={adjBtnColored(c)} onClick={() => changeSetCount(day, exIdx, 1)}>+</button>
+                                        </div>
+                                      </div>
+                                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
+                                        <span style={{ fontSize: 9, color: c.side, fontWeight: 600, letterSpacing: '0.06em' }}>
+                                          {ex.sets[0]?.repType === 'time' ? 'SEC' : 'REPS'}
+                                        </span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                                          <button type="button" style={adjBtnColored(c)} onClick={() => adjustAllReps(day, exIdx, -1)}>−</button>
+                                          <span style={{ fontSize: 12, minWidth: 24, textAlign: 'center', fontWeight: 500, color: c.text }}>{ex.sets[0]?.reps ?? 10}</span>
+                                          <button type="button" style={adjBtnColored(c)} onClick={() => adjustAllReps(day, exIdx, 1)}>+</button>
+                                        </div>
+                                      </div>
+                                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
+                                        <span style={{ fontSize: 9, color: c.side, fontWeight: 600, letterSpacing: '0.06em' }}>REST</span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                                          <button type="button" style={adjBtnColored(c)} onClick={() => adjustAllRest(day, exIdx, -15)}>−</button>
+                                          <span style={{ fontSize: 12, minWidth: 32, textAlign: 'center', color: c.text }}>{ex.sets[0]?.restSeconds ?? 60}s</span>
+                                          <button type="button" style={adjBtnColored(c)} onClick={() => adjustAllRest(day, exIdx, 15)}>+</button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
-                            ))}
-
-                            {/* Add set */}
-                            <button type="button" onClick={() => addSet(day, exIdx)}
-                              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 12px', fontSize: 11, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }}>
-                              + Set
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
@@ -1486,7 +1400,288 @@ export function AddProfileModal({ onClose, onSave, profileCount, initialProfile,
             </div>
           </div>
         )}
-      </div>
+
+        {/* ── Close confirmation ─────────────────────────────────────────── */}
+        {showCloseConfirm && (
+          <div
+            style={{
+              position: 'absolute', inset: 0, zIndex: 30,
+              background: 'rgba(0,0,0,0.4)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+            onClick={() => setShowCloseConfirm(false)}
+          >
+            <div
+              style={{
+                background: 'white', borderRadius: 20, margin: '0 24px',
+                padding: '28px 28px 24px',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+              }}
+              onClick={e => e.stopPropagation()}
+            >
+              <p className="pixel-font-small tracking-widest text-gray-400" style={{ fontSize: '0.5rem' }}>
+                SAVE DRAFT?
+              </p>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#111827', textAlign: 'center' }}>
+                {name || 'Untitled'}
+              </p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setShowCloseConfirm(false)}
+                  style={{
+                    padding: '9px 18px', borderRadius: 10, border: 'none',
+                    background: '#f3f4f6', color: '#374151', cursor: 'pointer',
+                    fontSize: 12, fontWeight: 600,
+                  }}
+                >CANCEL</button>
+                <button
+                  type="button"
+                  onClick={() => { setShowCloseConfirm(false); onClose(); }}
+                  style={{
+                    padding: '9px 18px', borderRadius: 10, border: 'none',
+                    background: '#fee2e2', color: '#dc2626', cursor: 'pointer',
+                    fontSize: 12, fontWeight: 600,
+                  }}
+                >DISCARD</button>
+                <button
+                  type="button"
+                  onClick={saveDraftAndClose}
+                  style={{
+                    padding: '9px 18px', borderRadius: 10, border: 'none',
+                    background: '#dc2626', color: 'white', cursor: 'pointer',
+                    fontSize: 12, fontWeight: 600,
+                    boxShadow: '0 3px 0 0 #991b1b',
+                  }}
+                >SAVE</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Body part picker popup (schedule step) ────────────────────── */}
+        {step === 'schedule' && editingDay && (() => {
+          const di    = DAYS.indexOf(editingDay);
+          const c     = DAY_COLORS[di];
+          const parts = schedule[editingDay] ?? [];
+          return (
+            <div style={{ position: 'absolute', inset: 0, zIndex: 20, background: 'white', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ padding: '16px 20px 14px', borderBottom: '0.5px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  padding: '7px 22px', borderRadius: 10,
+                  background: c.surface, color: 'white',
+                  boxShadow: `0 4px 0 0 ${c.side}`,
+                  fontSize: 14, fontWeight: 700, letterSpacing: '0.06em',
+                }}>
+                  {FULL_DAY[editingDay]}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingDay(null)}
+                  style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: '#f3f4f6', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280', fontSize: 18, lineHeight: 1 }}
+                >×</button>
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
+                  {BODY_PARTS.map(part => (
+                    <EquipmentCard
+                      key={part}
+                      label={part.toUpperCase()}
+                      active={parts.includes(part)}
+                      onClick={() => togglePart(editingDay, part)}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div style={{ padding: '12px 20px 24px', borderTop: '0.5px solid #e5e7eb' }}>
+                <button
+                  type="button"
+                  onClick={() => setEditingDay(null)}
+                  style={{
+                    width: '100%', padding: 11, borderRadius: 14, border: 'none',
+                    background: c.surface, color: 'white', cursor: 'pointer',
+                    boxShadow: `0 4px 0 0 ${c.side}`, fontSize: 14, fontWeight: 600,
+                  }}
+                >
+                  DONE
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── Exercise picker popup (modal-level) ───────────────────────── */}
+        {step === 'workout' && activeBP && (
+          <div style={{
+            position: 'absolute', inset: 0, zIndex: 20,
+            background: 'white', display: 'flex', flexDirection: 'column',
+          }}>
+            {/* Header */}
+            <div style={{
+              padding: '16px 20px 14px', borderBottom: '0.5px solid #e5e7eb',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}>
+              <div style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                padding: '7px 22px', borderRadius: 10,
+                background: '#dc2626', color: 'white',
+                boxShadow: '0 4px 0 0 #991b1b',
+                fontSize: 14, fontWeight: 700, letterSpacing: '0.06em',
+              }}>
+                {activeBP?.toUpperCase()}
+              </div>
+              <button
+                type="button"
+                onClick={() => { setActiveBP(null); setBpExercises([]); setExerciseSearch(''); }}
+                style={{
+                  width: 32, height: 32, borderRadius: '50%', border: 'none',
+                  background: '#f3f4f6', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: '#6b7280', fontSize: 18, lineHeight: 1,
+                }}
+              >×</button>
+            </div>
+
+            {/* Search */}
+            <div style={{ padding: '10px 16px 8px' }}>
+              <div style={{ position: 'relative' }}>
+                <input
+                  value={exerciseSearch}
+                  onChange={e => setExerciseSearch(e.target.value)}
+                  placeholder="Search..."
+                  className="pixel-font-small"
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    border: '1px solid #e5e7eb', borderRadius: 10,
+                    padding: '8px 32px 8px 12px', fontSize: '0.6rem',
+                    outline: 'none', color: '#374151',
+                  }}
+                />
+                <svg
+                  style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }}
+                  viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+                >
+                  <circle cx="11" cy="11" r="7" />
+                  <line x1="16.5" y1="16.5" x2="21" y2="21" />
+                </svg>
+              </div>
+            </div>
+
+                {/* Selected exercises chips */}
+                {(() => {
+                  const selEx = workoutExercises.filter(w => w.bodyPart === activeBP);
+                  if (selEx.length === 0) return null;
+                  return (
+                    <div style={{ padding: '4px 16px 8px', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {selEx.map(w => (
+                        <span
+                          key={w.exerciseId}
+                          onClick={() => {
+                            const idx = workoutExercises.findIndex(e => e.exerciseId === w.exerciseId);
+                            if (idx !== -1) removeExercise(workoutDay, idx);
+                          }}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            padding: '4px 10px', borderRadius: 20,
+                            background: '#fef2f2', color: '#dc2626',
+                            fontSize: 11, fontWeight: 500, cursor: 'pointer',
+                            border: '1px solid #fecaca',
+                          }}
+                        >
+                          {w.exerciseName}
+                          <span style={{ fontSize: 14, lineHeight: 1 }}>×</span>
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {/* Exercise picker grid */}
+                <div style={{ flex: 1, overflowY: 'auto', padding: '4px 16px 8px' }}>
+                  {loadingExercises ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                      {[...Array(6)].map((_, i) => (
+                        <div key={i} className="skeleton" style={{ height: 60, borderRadius: 12 }} />
+                      ))}
+                    </div>
+                  ) : filteredBpExercises.length === 0 ? (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 80 }}>
+                      <span style={{ fontSize: 12, color: '#d1d5db' }}>No exercises found</span>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                      {filteredBpExercises.map(ex => {
+                        const already = workoutExercises.some(w => w.exerciseId === ex.id);
+                        return (
+                          <div
+                            key={ex.id}
+                            onClick={() => {
+                              if (already) {
+                                const idx = workoutExercises.findIndex(w => w.exerciseId === ex.id);
+                                if (idx !== -1) removeExercise(workoutDay, idx);
+                              } else {
+                                addExercise(ex);
+                              }
+                            }}
+                            style={{
+                              position: 'relative',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              padding: '22px 10px 8px', borderRadius: 12, minHeight: 60,
+                              border: `2px solid ${already ? '#dc2626' : '#e5e7eb'}`,
+                              background: already ? '#fef2f2' : '#f9fafb',
+                              color: '#111827',
+                              opacity: already ? 0.5 : 1,
+                              cursor: 'pointer', boxSizing: 'border-box',
+                            }}
+                          >
+                            {ex.bodyPart && (
+                              <span
+                                className="pixel-font-small"
+                                style={{
+                                  position: 'absolute', top: 5, left: 7,
+                                  fontSize: '0.4rem', lineHeight: 1.4,
+                                  color: '#111827',
+                                  display: 'flex', flexWrap: 'wrap', gap: 3,
+                                }}
+                              >
+                                {ex.bodyPart.split(',').map(m => m.trim()).filter(Boolean).map((m, i) => (
+                                  <span key={i} style={{
+                                    padding: '1px 5px', borderRadius: 3,
+                                    background: '#dc2626', color: 'white',
+                                  }}>{m.toUpperCase()}</span>
+                                ))}
+                              </span>
+                            )}
+                            <span
+                              className="pixel-font-small text-center leading-tight"
+                              style={{ fontSize: '0.55rem', wordBreak: 'break-word', overflowWrap: 'break-word' }}
+                            >
+                              {ex.name.toUpperCase()}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+            {/* OK button */}
+            <div style={{ padding: '12px 16px 20px', borderTop: '0.5px solid #e5e7eb' }}>
+              <button
+                type="button"
+                onClick={() => { setActiveBP(null); setBpExercises([]); setExerciseSearch(''); }}
+                style={{
+                  width: '100%', padding: '11px', borderRadius: 14, border: 'none',
+                  background: '#dc2626', color: 'white', cursor: 'pointer',
+                  boxShadow: '0 4px 0 0 #991b1b', fontSize: 14, fontWeight: 600,
+                }}
+              >
+                DONE
+              </button>
+            </div>
+          </div>
+        )}
     </div>
   );
 }

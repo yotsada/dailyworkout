@@ -4,12 +4,14 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { TiltButton } from '../components/TiltButton';
 import type { WorkoutExercise, WorkoutDay } from '../profile/AddProfileModal';
+import { loadWorkoutSettings } from '../setting/page';
+import { getExerciseImageUrl } from '../lib/exerciseImages';
 
 const DAY_JS    = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const DAY_FULL  = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const MON_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-type Phase  = 'set' | 'timing' | 'rest';
+type Phase  = 'set' | 'timing' | 'rest' | 'rest_pending';
 type Screen = 'list' | 'working' | 'all_done';
 
 interface WS {
@@ -23,13 +25,14 @@ interface WS {
 }
 
 type Act =
-  | { type: 'load';  exercises: WorkoutExercise[]; done?: boolean[]; screen?: Screen }
-  | { type: 'pick';  idx: number }
+  | { type: 'load';       exercises: WorkoutExercise[]; done?: boolean[]; screen?: Screen }
+  | { type: 'pick';       idx: number }
   | { type: 'back' }
-  | { type: 'rep_done' }
+  | { type: 'rep_done';   autoStart: boolean }
   | { type: 'start_timer' }
   | { type: 'tick' }
-  | { type: 'skip_rest' };
+  | { type: 'skip_rest' }
+  | { type: 'start_rest' };
 
 function finishExercise(s: WS): WS {
   const done = s.done.map((v, i) => i === s.activeIdx ? true : v);
@@ -42,9 +45,10 @@ function advanceSet(s: WS): WS {
   return finishExercise(s);
 }
 
-function afterSet(s: WS): WS {
+function afterSet(s: WS, autoStart: boolean): WS {
   const rest = s.exercises[s.activeIdx]?.sets[s.setIdx]?.restSeconds ?? 0;
-  return rest > 0 ? { ...s, phase: 'rest', secsLeft: rest } : advanceSet(s);
+  if (rest > 0) return { ...s, phase: autoStart ? 'rest' : 'rest_pending', secsLeft: rest };
+  return advanceSet(s);
 }
 
 function reducer(s: WS, a: Act): WS {
@@ -54,26 +58,120 @@ function reducer(s: WS, a: Act): WS {
     case 'pick':
       return { ...s, activeIdx: a.idx, setIdx: 0, phase: 'set', screen: 'working' };
     case 'rep_done':
-      return afterSet(s);
+      return afterSet(s, a.autoStart);
     case 'start_timer': {
       const secs = s.exercises[s.activeIdx]?.sets[s.setIdx]?.reps ?? 0;
       return { ...s, phase: 'timing', secsLeft: secs };
     }
     case 'tick':
       if (s.secsLeft <= 1) {
-        if (s.phase === 'timing') return afterSet({ ...s, secsLeft: 0 });
+        if (s.phase === 'timing') return afterSet({ ...s, secsLeft: 0 }, true);
         if (s.phase === 'rest')   return advanceSet({ ...s, secsLeft: 0 });
       }
       return { ...s, secsLeft: s.secsLeft - 1 };
     case 'back':
       return { ...s, screen: 'list', setIdx: 0, phase: 'set' };
     case 'skip_rest':
-      return s.phase === 'rest' ? advanceSet(s) : s;
+      return (s.phase === 'rest' || s.phase === 'rest_pending') ? advanceSet(s) : s;
+    case 'start_rest':
+      return s.phase === 'rest_pending' ? { ...s, phase: 'rest' } : s;
     default: return s;
   }
 }
 
 const INIT: WS = { exercises: [], done: [], activeIdx: 0, setIdx: 0, phase: 'set', secsLeft: 0, screen: 'list' };
+
+// ── Web Audio beep ─────────────────────────────────────────────────────────
+
+function playBeep(freq = 880, duration = 0.2) {
+  try {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx  = new AudioCtx();
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.35, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    osc.start();
+    osc.stop(ctx.currentTime + duration);
+  } catch {}
+}
+
+// ── Exercise flip image ────────────────────────────────────────────────────
+
+function ExerciseFlipImage({ externalId }: { externalId: string | null | undefined }) {
+  const [frame, setFrame]         = useState<0 | 1>(0);
+  const [frame0ok, setFrame0ok]   = useState(false);
+  const [frame1ok, setFrame1ok]   = useState(false);
+  const [settled, setSettled]     = useState(false); // both attempted (load OR error)
+
+  useEffect(() => {
+    if (!externalId) { setSettled(true); return; }
+    setFrame0ok(false); setFrame1ok(false); setSettled(false); setFrame(0);
+
+    let attempts = 0;
+    const done = () => { if (++attempts === 2) setSettled(true); };
+
+    const img0 = new window.Image();
+    img0.onload  = () => { setFrame0ok(true);  done(); };
+    img0.onerror = () => {                      done(); };
+    img0.src = getExerciseImageUrl(externalId, 0)!;
+
+    const img1 = new window.Image();
+    img1.onload  = () => { setFrame1ok(true);  done(); };
+    img1.onerror = () => {                      done(); };
+    img1.src = getExerciseImageUrl(externalId, 1)!;
+
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[ExerciseFlip] loading', externalId);
+    }
+  }, [externalId]);
+
+  // Only cycle if BOTH frames loaded successfully
+  useEffect(() => {
+    if (!frame0ok || !frame1ok) return;
+    const id = setInterval(() => setFrame(f => (f === 0 ? 1 : 0)), 700);
+    return () => clearInterval(id);
+  }, [frame0ok, frame1ok]);
+
+  const wrapStyle: React.CSSProperties = {
+    width: '100%', borderRadius: 14, overflow: 'hidden',
+    background: '#f3f4f6', aspectRatio: '1 / 1',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  };
+
+  // No externalId or both images failed → placeholder
+  if (!externalId || (settled && !frame0ok && !frame1ok)) {
+    return (
+      <div style={wrapStyle}>
+        <svg viewBox="0 0 80 80" width="52" height="52" fill="none" stroke="#d1d5db" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="8" y="8" width="64" height="64" rx="12" />
+          <circle cx="28" cy="28" r="7" />
+          <polyline points="8,56 26,38 42,50 56,34 72,56" />
+        </svg>
+      </div>
+    );
+  }
+
+  // Still loading
+  if (!settled) {
+    return <div style={wrapStyle} className="skeleton" />;
+  }
+
+  // At least frame 0 loaded — show what we have
+  const src = getExerciseImageUrl(externalId, frame1ok ? frame : 0)!;
+  return (
+    <div style={wrapStyle}>
+      <img
+        src={src}
+        alt=""
+        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+      />
+    </div>
+  );
+}
 
 // ── Sub-components ─────────────────────────────────────────────────────────
 
@@ -111,12 +209,22 @@ export default function TodayPage() {
   const router = useRouter();
   const [ws, dispatch] = useReducer(reducer, INIT);
   const [status, setStatus] = useState<'loading' | 'no_profile' | 'rest_day' | 'ready'>('loading');
-  const sessionKeyRef = useRef<string | null>(null);
+  const sessionKeyRef      = useRef<string | null>(null);
   const activeProfileIdRef = useRef<string | null>(null);
-  const todayInProfileRef = useRef<boolean>(false);
+  const todayInProfileRef  = useRef<boolean>(false);
+
+  // Settings refs (read once on mount, don't need re-render)
+  const autoStartRef = useRef(true);
+  const soundRef     = useRef(true);
 
   const now = new Date();
   const dateLabel = `${DAY_FULL[now.getDay()]}, ${now.getDate()} ${MON_SHORT[now.getMonth()]}`;
+
+  useEffect(() => {
+    const s = loadWorkoutSettings();
+    autoStartRef.current = s.autoStartRest;
+    soundRef.current     = s.sound;
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -146,6 +254,7 @@ export default function TodayPage() {
             exerciseId:   ex.exerciseId,
             exerciseName: ex.exercise?.name ?? ex.exerciseName ?? '',
             bodyPart:     ex.exercise?.bodyPart ?? ex.bodyPart ?? '',
+            externalId:   ex.exercise?.externalId ?? null,
             sets: (ex.sets ?? [])
               .sort((a: any, b: any) => a.setNumber - b.setNumber)
               .map((s: any) => ({
@@ -168,6 +277,7 @@ export default function TodayPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
+  // Tick timer (only for 'timing' and 'rest' phases — not 'rest_pending')
   useEffect(() => {
     if (ws.screen !== 'working') return;
     if (ws.phase !== 'timing' && ws.phase !== 'rest') return;
@@ -175,11 +285,13 @@ export default function TodayPage() {
     return () => clearInterval(id);
   }, [ws.screen, ws.phase]);
 
+  // Persist session progress
   useEffect(() => {
     if (!sessionKeyRef.current || ws.exercises.length === 0) return;
     try { localStorage.setItem(sessionKeyRef.current, JSON.stringify({ done: ws.done, screen: ws.screen })); } catch {}
   }, [ws.done, ws.screen, ws.exercises.length]);
 
+  // Log workout progress
   useEffect(() => {
     if (status !== 'ready' || ws.exercises.length === 0) return;
     const token = localStorage.getItem('token');
@@ -202,6 +314,7 @@ export default function TodayPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ws.done, status]);
 
+  // Log rest day
   useEffect(() => {
     if (status !== 'rest_day') return;
     if (todayInProfileRef.current) return;
@@ -217,10 +330,25 @@ export default function TodayPage() {
     }).catch(() => {});
   }, [status]);
 
-  // ── shell for simple states
+  // Sound: beep when rest ends naturally (rest → set) or starts (set → rest/rest_pending)
+  const prevPhaseRef = useRef<Phase>('set');
+  useEffect(() => {
+    if (soundRef.current) {
+      const from = prevPhaseRef.current;
+      const to   = ws.phase;
+      if (from === 'rest' && to === 'set') {
+        playBeep(880, 0.25); // rest ended — back to work
+      } else if (from === 'set' && (to === 'rest' || to === 'rest_pending')) {
+        playBeep(440, 0.15); // rest starting — softer lower tone
+      }
+    }
+    prevPhaseRef.current = ws.phase;
+  }, [ws.phase]);
+
+  // ── shell for simple states ─────────────────────────────────────────────
   const shell = (content: React.ReactNode) => (
-    <div className="min-h-screen flex justify-center" style={{ background: '#f9fafb' }}>
-      <div className="bg-white w-full max-w-sm flex flex-col items-center justify-center gap-6"
+    <div className="min-h-screen flex justify-center" style={{ background: '#dc2626' }}>
+      <div className="bg-white w-full sm:max-w-sm flex flex-col items-center justify-center gap-6"
         style={{ padding: 'env(safe-area-inset-top) max(24px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(24px, env(safe-area-inset-left))' }}>
         {content}
       </div>
@@ -246,10 +374,10 @@ export default function TodayPage() {
     </>
   );
 
-  /* ── ALL DONE ─────────────────────────────────────────────────────────── */
+  /* ── ALL DONE ──────────────────────────────────────────────────────────── */
   if (ws.screen === 'all_done') return (
-    <div className="min-h-screen flex justify-center" style={{ background: '#f0fdf4' }}>
-      <div className="bg-white w-full max-w-sm flex flex-col items-center justify-center gap-6"
+    <div className="min-h-screen flex justify-center" style={{ background: '#dc2626' }}>
+      <div className="bg-white w-full sm:max-w-sm flex flex-col items-center justify-center gap-6"
         style={{ padding: 'env(safe-area-inset-top) max(24px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(24px, env(safe-area-inset-left))' }}>
         <div className="text-center">
           <div className="pixel-font text-4xl font-black tracking-tight" style={{ color: '#16a34a' }}>DONE!</div>
@@ -260,14 +388,11 @@ export default function TodayPage() {
     </div>
   );
 
-  /* ── EXERCISE LIST ────────────────────────────────────────────────────── */
+  /* ── EXERCISE LIST ─────────────────────────────────────────────────────── */
   if (ws.screen === 'list') {
-    const doneCount = ws.done.filter(Boolean).length;
-    const pct = ws.exercises.length > 0 ? (doneCount / ws.exercises.length) * 100 : 0;
-
     return (
-      <div className="min-h-screen flex justify-center" style={{ background: '#f9fafb' }}>
-        <div className="bg-white w-full max-w-sm flex flex-col" style={{ minHeight: '100dvh', paddingTop: 'max(32px, env(safe-area-inset-top))', paddingBottom: 'max(32px, env(safe-area-inset-bottom))', paddingLeft: 'max(20px, env(safe-area-inset-left))', paddingRight: 'max(20px, env(safe-area-inset-right))' }}>
+      <div className="min-h-screen flex justify-center" style={{ background: '#dc2626' }}>
+        <div className="bg-white w-full sm:max-w-sm flex flex-col" style={{ minHeight: '100dvh', paddingTop: 'max(32px, env(safe-area-inset-top))', paddingBottom: 'max(32px, env(safe-area-inset-bottom))', paddingLeft: 'max(20px, env(safe-area-inset-left))', paddingRight: 'max(20px, env(safe-area-inset-right))' }}>
 
           {/* Header */}
           <div className="flex items-center justify-between mb-1">
@@ -279,23 +404,9 @@ export default function TodayPage() {
             </div>
           </div>
 
-          {/* Title + progress */}
+          {/* Title */}
           <div className="mb-5 mt-3">
-            <div className="flex items-end justify-between mb-2">
-              <span className="pixel-font font-black tracking-tight" style={{ fontSize: '1.5rem', color: '#111827' }}>TODAY</span>
-              <span className="pixel-font-small tracking-widest" style={{ color: doneCount === ws.exercises.length ? '#16a34a' : '#9ca3af' }}>
-                {doneCount} / {ws.exercises.length}
-              </span>
-            </div>
-            {/* Progress bar */}
-            <div style={{ height: 6, borderRadius: 3, background: '#f3f4f6', overflow: 'hidden' }}>
-              <div style={{
-                height: '100%', borderRadius: 3,
-                width: `${pct}%`,
-                background: 'linear-gradient(90deg, #dc2626, #16a34a)',
-                transition: 'width 0.4s ease',
-              }} />
-            </div>
+            <span className="pixel-font font-black tracking-tight" style={{ fontSize: '1.5rem', color: '#111827' }}>TODAY</span>
           </div>
 
           {/* Exercise cards */}
@@ -398,27 +509,25 @@ export default function TodayPage() {
     );
   }
 
-  /* ── WORKING VIEW ─────────────────────────────────────────────────────── */
+  /* ── WORKING VIEW ──────────────────────────────────────────────────────── */
   const { exercises, activeIdx, setIdx, phase, secsLeft } = ws;
   const ex  = exercises[activeIdx];
   const set = ex.sets[setIdx];
-  const isRest = phase === 'rest';
+  const isResting = phase === 'rest' || phase === 'rest_pending';
+  const isPending = phase === 'rest_pending';
 
   return (
-    <div className="min-h-screen flex justify-center" style={{ background: isRest ? '#fff7ed' : '#f9fafb' }}>
-      <div className="w-full max-w-sm flex flex-col" style={{ minHeight: '100dvh', paddingTop: 'max(32px, env(safe-area-inset-top))', paddingBottom: 'max(32px, env(safe-area-inset-bottom))', paddingLeft: 'max(20px, env(safe-area-inset-left))', paddingRight: 'max(20px, env(safe-area-inset-right))' }}>
+    <div className="min-h-screen flex justify-center" style={{ background: isResting ? '#fff7ed' : '#f9fafb' }}>
+      <div className="w-full sm:max-w-sm flex flex-col" style={{ minHeight: '100dvh', paddingTop: 'max(32px, env(safe-area-inset-top))', paddingBottom: 'max(32px, env(safe-area-inset-bottom))', paddingLeft: 'max(20px, env(safe-area-inset-left))', paddingRight: 'max(20px, env(safe-area-inset-right))' }}>
 
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <BackBtn onClick={() => dispatch({ type: 'back' })} />
-          <span className="pixel-font-small tracking-widest" style={{ color: '#9ca3af' }}>
-            {activeIdx + 1} / {exercises.length}
-          </span>
         </div>
 
-        {isRest ? (
+        {isResting ? (
 
-          /* ── REST ── */
+          /* ── REST / REST_PENDING ── */
           <div className="flex flex-col flex-1 items-center justify-center gap-8">
 
             <div style={{
@@ -429,61 +538,75 @@ export default function TodayPage() {
               padding: '40px 24px',
               textAlign: 'center',
             }}>
-              <div className="pixel-font-small tracking-widest mb-4" style={{ color: '#f97316' }}>REST</div>
+              <div className="pixel-font-small tracking-widest mb-4" style={{ color: '#f97316' }}>
+                {isPending ? 'READY TO REST' : 'REST'}
+              </div>
               <div className="pixel-font font-black" style={{
                 fontSize: '7rem', lineHeight: 1, color: '#ea580c',
                 textShadow: '0 6px 0 #fed7aa',
+                opacity: isPending ? 0.5 : 1,
               }}>
                 {secsLeft}
               </div>
               <div className="pixel-font-small tracking-widest mt-3" style={{ color: '#fdba74' }}>SEC</div>
             </div>
 
-            <TiltButton surface="#f97316" side="#c2410c" onClick={() => dispatch({ type: 'skip_rest' })}>
-              SKIP
-            </TiltButton>
+            {isPending ? (
+              <div style={{ display: 'flex', gap: 12 }}>
+                <TiltButton surface="#f97316" side="#c2410c" onClick={() => dispatch({ type: 'start_rest' })}>
+                  START REST
+                </TiltButton>
+                <TiltButton surface="#9ca3af" side="#6b7280" onClick={() => dispatch({ type: 'skip_rest' })}>
+                  SKIP
+                </TiltButton>
+              </div>
+            ) : (
+              <TiltButton surface="#f97316" side="#c2410c" onClick={() => dispatch({ type: 'skip_rest' })}>
+                SKIP
+              </TiltButton>
+            )}
           </div>
 
         ) : (
 
           /* ── SET / TIMING ── */
-          <div className="flex flex-col flex-1 items-center justify-center gap-8">
+          <div className="flex flex-col flex-1 items-center gap-3" style={{ justifyContent: 'flex-start', paddingTop: 8 }}>
+
+            {/* Flip image */}
+            <div style={{ width: '100%' }}>
+              <ExerciseFlipImage externalId={ex.externalId} />
+            </div>
+
+            {/* Exercise name */}
+            <div style={{
+              fontSize: 12, fontWeight: 700, letterSpacing: '0.12em',
+              color: '#111827', textAlign: 'center',
+            }}>
+              {ex.exerciseName.toUpperCase()}
+            </div>
 
             {/* Exercise card */}
             <div style={{
               width: '100%', borderRadius: 20,
               background: 'white',
               border: `1.5px solid ${phase === 'timing' ? '#fecaca' : '#e5e7eb'}`,
-              boxShadow: `0 6px 0 ${phase === 'timing' ? '#fecaca' : '#e5e7eb'}`,
-              padding: '32px 24px 36px',
+              boxShadow: `0 4px 0 ${phase === 'timing' ? '#fecaca' : '#e5e7eb'}`,
+              padding: '16px 24px 20px',
               textAlign: 'center',
               transition: 'border-color 0.2s, box-shadow 0.2s',
             }}>
 
-              {/* Exercise name */}
-              <div style={{
-                fontSize: 12, fontWeight: 700, letterSpacing: '0.12em',
-                color: '#9ca3af', marginBottom: 8,
-              }}>
-                {ex.exerciseName.toUpperCase()}
-              </div>
-
-              {/* Set dots */}
-              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 24 }}>
-                <SetDots total={ex.sets.length} current={setIdx} />
-              </div>
-
               {/* Big number */}
               <div className="pixel-font font-black" style={{
-                fontSize: '7rem', lineHeight: 1,
+                fontSize: '5rem', lineHeight: 1,
                 color: phase === 'timing' ? '#dc2626' : '#111827',
-                textShadow: phase === 'timing' ? '0 6px 0 #fecaca' : '0 6px 0 #e5e7eb',
+                textShadow: phase === 'timing' ? '0 4px 0 #fecaca' : '0 4px 0 #e5e7eb',
                 transition: 'color 0.2s, text-shadow 0.2s',
               }}>
                 {set.repType === 'time' && phase === 'timing' ? secsLeft : set.reps}
               </div>
 
-              <div className="pixel-font-small tracking-widest mt-3" style={{
+              <div className="pixel-font-small tracking-widest mt-2" style={{
                 color: phase === 'timing' ? '#f87171' : '#9ca3af',
               }}>
                 {set.repType === 'time' ? 'SEC' : 'REPS'}
@@ -495,13 +618,25 @@ export default function TodayPage() {
               ? phase !== 'timing' && (
                   <TiltButton onClick={() => dispatch({ type: 'start_timer' })}>START</TiltButton>
                 )
-              : <TiltButton onClick={() => dispatch({ type: 'rep_done' })}>DONE</TiltButton>
+              : null
             }
 
           </div>
         )}
 
       </div>
+
+      {/* Fixed DONE button — count exercises only */}
+      {ws.screen === 'working' && !isResting && ws.exercises[ws.activeIdx]?.sets[ws.setIdx]?.repType !== 'time' && (
+        <div style={{
+          position: 'fixed', bottom: 'max(64px, env(safe-area-inset-bottom))',
+          left: '50%', transform: 'translateX(-50%)',
+          zIndex: 10,
+        }}>
+          <TiltButton onClick={() => dispatch({ type: 'rep_done', autoStart: autoStartRef.current })}>DONE</TiltButton>
+        </div>
+      )}
+
     </div>
   );
 }

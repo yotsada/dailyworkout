@@ -73,6 +73,7 @@ model ProfileDay {
 
 model Exercise {
   id           String        @id @default(cuid())
+  externalId   String?       @unique
   name         String        @unique
   bodyPart     String
   repType      String        @default("count") // 'count' | 'time'

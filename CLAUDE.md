@@ -57,8 +57,9 @@ ExerciseSet      id(cuid), dayExerciseId, setNumber, repType(count|time),
                  reps?(count only), duration?(seconds, time only), restSeconds(default:60)
                  → dayExercise
 
-Exercise         id(cuid), name(unique), bodyPart, repType(default:"count"), equipmentId?
+Exercise         id(cuid), externalId?(unique), name(unique), bodyPart, repType(default:"count"), equipmentId?
                  → equipment?, dayExercises[]
+                 externalId = free-exercise-db id (e.g. "Alternate_Incline_Dumbbell_Curl"); null for custom exercises
 
 Equipment        id(cuid), name(unique)
                  → exercises[], profileEquipment[]
@@ -103,6 +104,32 @@ PORT=3000
 - `TiltButton` — custom button with 3D press effect (`app/components/TiltButton.tsx`)
 - `AddProfileModal` — full modal for creating/editing workout profiles (`app/profile/AddProfileModal.tsx`)
   - Exports types: `ProfileData`, `WorkoutScheduleDay`, `WorkoutDay`, `WorkoutExercise`, `WorkoutSet`, `DAYS`, `DAY_COLORS`
+  - `WorkoutExercise` fields: `exerciseId`, `exerciseName`, `bodyPart` (broad category), `muscle` (DB muscle name), `externalId`, `sets`
+
+### AddProfileModal — steps & UX
+| Step | UI |
+|---|---|
+| equipment | 4-col grid ของ `EquipmentCard` (square, icon+label), drag/tap เพิ่มอุปกรณ์เข้า drop zone |
+| schedule | 7 แถวเต็มจอ (`flex:1` ต่อวัน) กดทั้งแถวเพื่อเปิด body-part picker |
+| workout | Horizontal day wheel + body-part filter cards + exercise picker popup (2-col grid) |
+| summary | รายการท่าทุกวัน แก้ sets/reps/rest ได้ |
+
+**Exercise picker popup:**
+- แสดงท่า 2 คอลัมน์ พร้อมแท็กกล้ามเนื้อ (สีแดง มุมบนซ้าย)
+- ท่าที่เลือกแล้วแสดงเป็น chip ด้านบน กด × เพื่อลบ
+- `bodyPart` ที่เก็บ = broad category (`activeBP`) เพื่อ match กับ schedule
+- `muscle` ที่เก็บ = ชื่อกล้ามเนื้อละเอียดจาก DB (เช่น `"biceps"`)
+- `normalizeBP()` + `MUSCLE_TO_CATEGORY` map ใช้ normalize ตอน load จาก initialProfile
+
+**bodyPart normalization:**
+```ts
+MUSCLE_TO_CATEGORY = {
+  chest→Chest, lats/middle back/lower back/traps/neck→Back,
+  quadriceps/hamstrings/glutes/calves/adductors/abductors→Legs,
+  shoulders→Shoulders, biceps/triceps/forearms→Arms,
+  abdominals/hip flexors→Core
+}
+```
 
 ### Auth / state pattern
 - Token stored in `localStorage` as `token`
@@ -114,9 +141,16 @@ PORT=3000
 ### Today page FSM
 State machine via `useReducer` with phases:
 - Screen: `list` → `working` → `all_done`
-- Phase: `set` → `timing` (time-based) or direct done → `rest` → next set
+- Phase: `set` → `timing` (time-based) or direct done → `rest`/`rest_pending` → next set
 - Progress auto-saved to `localStorage` key: `today_done_<profileId>_<dateString>`
 - Workout log POSTed to `/workout-logs` on exercise completion
+
+**Today page layout (working screen):**
+- Header: BackBtn (ซ้าย)
+- รูป 2 เฟรม (`ExerciseFlipImage`) เต็มความกว้าง
+- ชื่อท่า (ใต้รูป, สีดำ)
+- การ์ดตัวเลข reps/timer (padding กระชับ)
+- ปุ่ม DONE: `position: fixed` กึ่งกลางด้านล่าง
 
 ### Env vars needed
 ```
@@ -153,6 +187,17 @@ cd backend && npx prisma migrate dev --name <name>
 ```bash
 cd backend && npx prisma generate
 ```
+
+### Seed exercise library (873 exercises from free-exercise-db)
+```bash
+cd backend && npm run seed:exercises    # upsert by externalId (idempotent)
+cd backend && npm run reset:exercises   # ลบทั้งหมด + seed ใหม่สะอาด
+cd backend && npm run dedup:equipment   # merge equipment ซ้ำ (case-insensitive)
+```
+- ปัจจุบัน: 873 ท่า (736 count + 137 time), 18 equipment
+- Cardio filter (`repType=time`) แยกจาก muscle-based filter ด้วย `repType: { not: 'time' }`
+- Images: GitHub raw CDN `https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/{externalId}/{0|1}.jpg`
+- Helper: `frontend/app/lib/exerciseImages.ts` → `getExerciseImageUrl(externalId, frame)`
 
 ---
 
