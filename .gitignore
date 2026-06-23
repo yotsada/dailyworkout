@@ -26,3 +26,8 @@ Thumbs.db
 # Claude Code
 .claude/
 
+# Docs / notes (not needed for running the project)
+*.md
+note.text
+deploy-guide-prompt.txt
+
