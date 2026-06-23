@@ -31,41 +31,27 @@ interface EquipmentCardProps {
   label: string;
   active?: boolean;
   dimmed?: boolean;
-  draggable?: boolean;
   onClick?: () => void;
-  onDragStart?: (e: React.DragEvent) => void;
   onRemove?: () => void;
-  onPointerDown?: (e: React.PointerEvent) => void;
-  onPointerMove?: (e: React.PointerEvent) => void;
-  onPointerUp?: (e: React.PointerEvent) => void;
-  onPointerCancel?: (e: React.PointerEvent) => void;
 }
 
 function EquipmentCard({
-  label, active = false, dimmed = false, draggable = false,
-  onClick, onDragStart, onRemove,
-  onPointerDown, onPointerMove, onPointerUp, onPointerCancel,
+  label, active = false, dimmed = false,
+  onClick, onRemove,
 }: EquipmentCardProps) {
   return (
     <div style={{ position: 'relative', width: '100%', opacity: dimmed ? 0.35 : 1, userSelect: 'none', minWidth: 0 }}>
       <div
-        draggable={draggable}
         onClick={onClick}
-        onDragStart={onDragStart}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerCancel}
         style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between',
           padding: 8, borderRadius: 12,
           border: `2px solid ${active ? '#dc2626' : '#e5e7eb'}`,
           background: active ? '#fef2f2' : '#f9fafb',
           color: '#111827',
-          cursor: draggable ? 'grab' : (onClick || onPointerDown) ? 'pointer' : 'default',
+          cursor: onClick ? 'pointer' : 'default',
           minHeight: CARD_SIZE, width: '100%', aspectRatio: '1 / 1',
           boxSizing: 'border-box', gap: 4,
-          touchAction: onPointerDown ? 'none' : 'auto',
         }}
       >
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -495,37 +481,6 @@ function DayWheelH({ value, onChange, warnings }: DayWheelHProps) {
   );
 }
 
-// ── Drag helpers ───────────────────────────────────────────────────────────
-
-function makeGhost(text: string): HTMLDivElement {
-  const g = document.createElement('div');
-  g.textContent = text;
-  Object.assign(g.style, {
-    position: 'fixed', zIndex: '9999',
-    width: '62px', height: '62px', borderRadius: '12px',
-    fontSize: '0.4rem', fontFamily: 'inherit',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    textAlign: 'center', padding: '4px', boxSizing: 'border-box',
-    background: '#fef2f2', border: '2px solid #dc2626', color: '#dc2626',
-    pointerEvents: 'none', opacity: '0.85',
-    transform: 'translate(-50%,-50%)',
-    left: '-999px', top: '-999px',
-  });
-  document.body.appendChild(g);
-  return g;
-}
-
-function moveGhost(g: HTMLDivElement, x: number, y: number) {
-  g.style.left = `${x}px`;
-  g.style.top  = `${y}px`;
-}
-
-function isOverZone(ref: HTMLDivElement | null, x: number, y: number) {
-  if (!ref) return false;
-  const el = document.elementFromPoint(x, y);
-  return el === ref || ref.contains(el as Node);
-}
-
 // ── Set editor helpers ─────────────────────────────────────────────────────
 
 const adjBtnStyle: React.CSSProperties = {
@@ -550,7 +505,6 @@ export function AddProfileModal({ onClose, onSave, onDraft, profileCount, initia
   const [name, setName]             = useState(initialProfile?.name ?? `Profile ${profileCount + 1}`);
   const [search, setSearch]         = useState('');
   const [selected, setSelected]     = useState<Set<string>>(new Set());
-  const [equipDropActive, setEquipDropActive] = useState(false);
   const [allEquipment, setAllEquipment]       = useState<EquipmentItem[]>([]);
   const [loadingEquipment, setLoadingEquipment] = useState(true);
   const [step, setStep]             = useState<'equipment' | 'schedule' | 'workout' | 'summary'>(initialStep ?? 'equipment');
@@ -585,11 +539,6 @@ export function AddProfileModal({ onClose, onSave, onDraft, profileCount, initia
   const [loadingExercises, setLoadingExercises] = useState(false);
   const [workoutWarnVisible, setWorkoutWarnVisible] = useState(false);
   const [exerciseSearch, setExerciseSearch] = useState('');
-
-  // Equipment touch drag
-  const equipDropRef      = useRef<HTMLDivElement>(null);
-  const equipGhostRef     = useRef<HTMLDivElement | null>(null);
-  const equipDragRef      = useRef<{ id: string; startX: number; startY: number; dragging: boolean } | null>(null);
 
 
   const workoutDay         = DAYS[workoutDayIdx];
@@ -631,60 +580,6 @@ export function AddProfileModal({ onClose, onSave, onDraft, profileCount, initia
 
   const removeEquip = (id: string) =>
     setSelected(prev => { const n = new Set(prev); n.delete(id); return n; });
-
-  // ── Equipment drag handlers ──────────────────────────────────────────────
-
-  const handleEquipDragStart = (e: React.DragEvent, id: string) => {
-    e.dataTransfer.setData('text/plain', id);
-    e.dataTransfer.effectAllowed = 'move';
-  };
-  const handleEquipDragOver = (e: React.DragEvent) => {
-    e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setEquipDropActive(true);
-  };
-  const handleEquipDrop = (e: React.DragEvent) => {
-    e.preventDefault(); setEquipDropActive(false);
-    const id = e.dataTransfer.getData('text/plain');
-    if (id && nonBodyList.some(eq => eq.id === id)) setSelected(prev => new Set([...prev, id]));
-  };
-
-  const onEquipPD = (e: React.PointerEvent, id: string) => {
-    if (e.pointerType === 'mouse') return;
-    (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    equipDragRef.current = { id, startX: e.clientX, startY: e.clientY, dragging: false };
-  };
-
-  const onEquipPM = (e: React.PointerEvent) => {
-    const d = equipDragRef.current;
-    if (!d) return;
-    if (!d.dragging && Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 15) {
-      d.dragging = true;
-      const label = allEquipment.find(eq => eq.id === d.id)?.name.toUpperCase() ?? '';
-      equipGhostRef.current = makeGhost(label);
-    }
-    if (equipGhostRef.current) {
-      moveGhost(equipGhostRef.current, e.clientX, e.clientY);
-      setEquipDropActive(isOverZone(equipDropRef.current, e.clientX, e.clientY));
-    }
-  };
-
-  const onEquipPU = (e: React.PointerEvent) => {
-    const d = equipDragRef.current;
-    if (!d) return;
-    equipDragRef.current = null;
-    if (equipGhostRef.current) { document.body.removeChild(equipGhostRef.current); equipGhostRef.current = null; }
-    if (d.dragging && isOverZone(equipDropRef.current, e.clientX, e.clientY)) {
-      setSelected(prev => new Set([...prev, d.id]));
-    }
-    setEquipDropActive(false);
-  };
-
-  const onEquipPC = () => {
-    if (equipGhostRef.current) { document.body.removeChild(equipGhostRef.current); equipGhostRef.current = null; }
-    equipDragRef.current = null;
-    setEquipDropActive(false);
-  };
-
-
 
 
   // ── Profile helpers ──────────────────────────────────────────────────────
@@ -906,18 +801,13 @@ export function AddProfileModal({ onClose, onSave, onDraft, profileCount, initia
             <div className="flex flex-col gap-2">
               <label className="pixel-font-small tracking-widest text-gray-500">I HAVE</label>
               <div
-                ref={equipDropRef}
-                onDragOver={handleEquipDragOver}
-                onDragLeave={() => setEquipDropActive(false)}
-                onDrop={handleEquipDrop}
                 style={{
                   height: CARD_SIZE * 2 + 52, borderRadius: 12,
-                  border: `2px dashed ${equipDropActive ? '#dc2626' : '#d1d5db'}`,
-                  background: equipDropActive ? '#fff5f5' : '#fafafa',
+                  border: '2px dashed #d1d5db',
+                  background: '#fafafa',
                   display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
                   alignContent: 'start',
                   gap: 8, padding: 8, overflowY: 'auto',
-                  transition: 'border-color 0.15s ease, background-color 0.15s ease',
                 }}
               >
                 <EquipmentCard label="BODY" active />
@@ -933,12 +823,12 @@ export function AddProfileModal({ onClose, onSave, onDraft, profileCount, initia
                     />
                   );
                 })}
-                {selected.size === 0 && !equipDropActive && (
+                {selected.size === 0 && (
                   <span
                     className="pixel-font-small text-gray-300 m-auto pointer-events-none"
                     style={{ fontSize: '0.42rem', gridColumn: '1 / -1', alignSelf: 'center' }}
                   >
-                    DRAG OR TAP TO ADD
+                    TAP TO ADD
                   </span>
                 )}
               </div>
@@ -971,13 +861,7 @@ export function AddProfileModal({ onClose, onSave, onDraft, profileCount, initia
                       <EquipmentCard
                         key={eq.id}
                         label={eq.name.toUpperCase()}
-                        draggable
                         onClick={() => setSelected(prev => new Set([...prev, eq.id]))}
-                        onDragStart={e => handleEquipDragStart(e, eq.id)}
-                        onPointerDown={e => onEquipPD(e, eq.id)}
-                        onPointerMove={onEquipPM}
-                        onPointerUp={onEquipPU}
-                        onPointerCancel={onEquipPC}
                       />
                     ))}
                   </div>

@@ -5,6 +5,25 @@
 
 ---
 
+## 23/06/2026 — ลบระบบ drag-and-drop อุปกรณ์ออกจาก AddProfileModal
+
+**ไฟล์ที่แก้:**
+- `frontend/app/profile/AddProfileModal.tsx`
+
+**เหตุผล:** บนมือถือ ผู้ใช้เลื่อนดูรายการอุปกรณ์ด้านล่างไม่ได้ เพราะ pointer events ถูก intercept ไปเป็น drag แทน
+
+**สิ่งที่ลบออก:**
+- `EquipmentCardProps`: ลบ `draggable`, `onDragStart`, `onPointerDown`, `onPointerMove`, `onPointerUp`, `onPointerCancel`
+- `EquipmentCard`: ลบ `touchAction: none`, drag/pointer handlers
+- Helper functions: ลบ `makeGhost`, `moveGhost`, `isOverZone`
+- State: ลบ `equipDropActive`
+- Refs: ลบ `equipDropRef`, `equipGhostRef`, `equipDragRef`
+- Handlers: ลบ `handleEquipDragStart/Over/Drop`, `onEquipPD/PM/PU/PC`
+- Drop zone: ลบ `ref`, `onDragOver`, `onDragLeave`, `onDrop`, เปลี่ยน static styling
+- เปลี่ยน placeholder text จาก "DRAG OR TAP TO ADD" → "TAP TO ADD"
+
+---
+
 ## 21/05/2026 — ปรับ UI AddProfileModal + today page
 
 **ไฟล์ที่แก้:**
