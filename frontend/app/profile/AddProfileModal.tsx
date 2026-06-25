@@ -792,7 +792,11 @@ export function AddProfileModal({ onClose, onSave, onDraft, profileCount, initia
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-white flex flex-col overflow-hidden"
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:bg-black/40"
+      onClick={handleClose}
+    >
+    <div
+      className="bg-white flex flex-col overflow-hidden w-full h-dvh md:max-w-sm md:h-[90vh] md:rounded-2xl md:shadow-2xl"
       onClick={e => e.stopPropagation()}
     >
         {/* Drag handle + close */}
@@ -1706,6 +1710,7 @@ export function AddProfileModal({ onClose, onSave, onDraft, profileCount, initia
             </div>
           </div>
         )}
+    </div>
     </div>
   );
 }
