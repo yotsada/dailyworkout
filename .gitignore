@@ -31,3 +31,6 @@ Thumbs.db
 note.text
 deploy-guide-prompt.txt
 
+# Logo source assets (copied to frontend/public already)
+logo-assets/
+

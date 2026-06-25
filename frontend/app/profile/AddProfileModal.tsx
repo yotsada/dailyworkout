@@ -539,6 +539,8 @@ export function AddProfileModal({ onClose, onSave, onDraft, profileCount, initia
   const [loadingExercises, setLoadingExercises] = useState(false);
   const [workoutWarnVisible, setWorkoutWarnVisible] = useState(false);
   const [exerciseSearch, setExerciseSearch] = useState('');
+  const [showCopyMenu, setShowCopyMenu] = useState(false);
+  const [copyConfirmDay, setCopyConfirmDay] = useState<string | null>(null);
 
 
   const workoutDay         = DAYS[workoutDayIdx];
@@ -763,6 +765,29 @@ export function AddProfileModal({ onClose, onSave, onDraft, profileCount, initia
       return { ...prev, [day]: exs };
     });
 
+  // ── Copy from day ────────────────────────────────────────────────────────
+
+  const copyableDays = useMemo(
+    () => DAYS.filter(d => d !== workoutDay && (workout[d]?.length ?? 0) > 0),
+    [workout, workoutDay],
+  );
+
+  const executeCopyFromDay = (fromDay: string) => {
+    setWorkout(prev => ({ ...prev, [workoutDay]: (workout[fromDay] ?? []).map(ex => ({ ...ex, sets: ex.sets.map(s => ({ ...s })) })) }));
+    setSchedule(prev => ({ ...prev, [workoutDay]: [...(schedule[fromDay] ?? [])] }));
+    setCopyConfirmDay(null);
+  };
+
+  const handleCopyDaySelect = (fromDay: string) => {
+    setShowCopyMenu(false);
+    const hasExisting = (workout[workoutDay]?.length ?? 0) > 0 || (schedule[workoutDay]?.length ?? 0) > 0;
+    if (hasExisting) {
+      setCopyConfirmDay(fromDay);
+    } else {
+      executeCopyFromDay(fromDay);
+    }
+  };
+
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
@@ -972,6 +997,30 @@ export function AddProfileModal({ onClose, onSave, onDraft, profileCount, initia
 
             {/* Scrollable content */}
             <div className="flex flex-col flex-1 min-h-0 overflow-y-auto px-6 pt-4 pb-4 gap-4">
+
+              {/* Copy from day button */}
+              {copyableDays.length > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowCopyMenu(true)}
+                    className="pixel-font-small"
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      padding: '4px 10px', borderRadius: 8,
+                      background: '#f3f4f6', border: '1px solid #e5e7eb',
+                      color: '#6b7280', fontSize: '0.45rem', fontWeight: 600,
+                      cursor: 'pointer', letterSpacing: '0.04em',
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="9" y="9" width="13" height="13" rx="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                    COPY FROM DAY
+                  </button>
+                </div>
+              )}
 
               {workoutBodyParts.length > 0 && (
                 <>
@@ -1342,6 +1391,97 @@ export function AddProfileModal({ onClose, onSave, onDraft, profileCount, initia
             </div>
           </div>
         )}
+
+        {/* ── Copy from day menu ────────────────────────────────────────── */}
+        {showCopyMenu && (
+          <div
+            style={{ position: 'absolute', inset: 0, zIndex: 30, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+            onClick={() => setShowCopyMenu(false)}
+          >
+            <div
+              style={{ background: 'white', borderRadius: '20px 20px 0 0', width: '100%', padding: '20px 20px 32px', display: 'flex', flexDirection: 'column', gap: 12 }}
+              onClick={e => e.stopPropagation()}
+            >
+              <p className="pixel-font-small tracking-widest text-gray-400" style={{ fontSize: '0.45rem', textAlign: 'center' }}>COPY FROM</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {copyableDays.map(d => {
+                  const di = DAYS.indexOf(d);
+                  const c  = DAY_COLORS[di];
+                  const exCount = workout[d]?.length ?? 0;
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => handleCopyDaySelect(d)}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '12px 16px', borderRadius: 12, border: 'none',
+                        background: c.light, cursor: 'pointer',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{
+                          width: 44, height: 28, borderRadius: 7,
+                          background: c.surface, color: 'white',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 11, fontWeight: 700, letterSpacing: '0.06em',
+                          boxShadow: `0 2px 0 0 ${c.side}`, flexShrink: 0,
+                        }}>{d}</span>
+                        <span style={{ fontSize: 12, color: c.text, fontWeight: 500 }}>
+                          {workout[d]?.map(e => e.exerciseName).slice(0, 2).join(', ')}{exCount > 2 ? ` +${exCount - 2}` : ''}
+                        </span>
+                      </div>
+                      <span style={{ fontSize: 11, color: c.side, fontWeight: 600 }}>{exCount} exercises</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Copy confirm dialog ────────────────────────────────────────── */}
+        {copyConfirmDay && (() => {
+          const di = DAYS.indexOf(copyConfirmDay);
+          const c  = DAY_COLORS[di];
+          const wdi = DAYS.indexOf(workoutDay);
+          const wc  = DAY_COLORS[wdi];
+          return (
+            <div
+              style={{ position: 'absolute', inset: 0, zIndex: 30, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              onClick={() => setCopyConfirmDay(null)}
+            >
+              <div
+                style={{ background: 'white', borderRadius: 20, margin: '0 24px', padding: '28px 24px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}
+                onClick={e => e.stopPropagation()}
+              >
+                <p className="pixel-font-small tracking-widest text-gray-400" style={{ fontSize: '0.45rem' }}>REPLACE DAY?</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ padding: '5px 14px', borderRadius: 8, background: c.surface, color: 'white', fontSize: 12, fontWeight: 700, boxShadow: `0 2px 0 0 ${c.side}` }}>{copyConfirmDay}</span>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#9ca3af" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="5" y1="12" x2="19" y2="12" /><polyline points="13,6 19,12 13,18" />
+                  </svg>
+                  <span style={{ padding: '5px 14px', borderRadius: 8, background: wc.surface, color: 'white', fontSize: 12, fontWeight: 700, boxShadow: `0 2px 0 0 ${wc.side}` }}>{workoutDay}</span>
+                </div>
+                <p style={{ fontSize: 12, color: '#6b7280', textAlign: 'center', lineHeight: 1.6, margin: 0 }}>
+                  ท่าและ Body Part ทั้งหมดของวัน <strong style={{ color: '#111827' }}>{workoutDay}</strong> จะถูกแทนที่<br />ของเดิมจะหายไป
+                </p>
+                <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+                  <button
+                    type="button"
+                    onClick={() => setCopyConfirmDay(null)}
+                    style={{ flex: 1, padding: '10px', borderRadius: 10, border: 'none', background: '#f3f4f6', color: '#374151', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+                  >CANCEL</button>
+                  <button
+                    type="button"
+                    onClick={() => executeCopyFromDay(copyConfirmDay)}
+                    style={{ flex: 1, padding: '10px', borderRadius: 10, border: 'none', background: '#dc2626', color: 'white', cursor: 'pointer', fontSize: 12, fontWeight: 600, boxShadow: '0 3px 0 0 #991b1b' }}
+                  >REPLACE</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── Body part picker popup (schedule step) ────────────────────── */}
         {step === 'schedule' && editingDay && (() => {

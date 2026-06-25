@@ -19,6 +19,26 @@ const CATEGORY_REP_TYPE: Record<string, 'count' | 'time'> = {
   cardio:                 'time',
 };
 
+// Exercises that should be time-based regardless of category (isometric holds, timed carries, etc.)
+const NAME_TIME_OVERRIDES = new Set([
+  'plank',
+  'side bridge',
+  'flutter kicks',
+  'spider crawl',
+  'bottoms up',
+  'push up to side plank',
+  'isometric neck exercise - front and back',
+  'isometric neck exercise - sides',
+  'isometric wipers',
+  'leverage iso row',
+  'mountain climbers',
+  'isometric chest squeezes',
+  "farmer's walk",
+  'yoke walk',
+  'rickshaw carry',
+  'bear crawl sled drags',
+]);
+
 const EQUIP_MAP: Record<string, string | null> = {
   'body only':    null,
   'kettlebells':  'kettlebell',
@@ -87,7 +107,9 @@ async function main() {
     }
 
     const bodyPart    = r.primaryMuscles[0].toLowerCase();
-    const repType     = CATEGORY_REP_TYPE[r.category] ?? 'count';
+    const repType     = NAME_TIME_OVERRIDES.has(r.name.toLowerCase())
+      ? 'time'
+      : (CATEGORY_REP_TYPE[r.category] ?? 'count');
     const equipName   = normEquip(r.equipment);
     const equipmentId = equipName ? (equipMap.get(equipName) ?? null) : null;
 
