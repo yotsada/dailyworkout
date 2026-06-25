@@ -762,6 +762,35 @@ export default function ProfilePage() {
     setShowImport(false);
   };
 
+  const handleImportSave = async (data: ProfileData) => {
+    const base  = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:3000';
+    const allExercises = (data.workout ?? []).flatMap(d => d.exercises);
+    const unresolved   = allExercises.filter(e => !e.exerciseId);
+    if (unresolved.length > 0) {
+      try {
+        const names   = [...new Set(unresolved.map(e => e.exerciseName))];
+        const res     = await fetch(`${base}/exercises/resolve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ names }),
+        });
+        const resolved: { id: string; name: string }[] = res.ok ? await res.json() : [];
+        const nameToId = new Map(resolved.map(r => [r.name, r.id]));
+        data = {
+          ...data,
+          workout: (data.workout ?? []).map(d => ({
+            ...d,
+            exercises: d.exercises.map(e => ({
+              ...e,
+              exerciseId: e.exerciseId || nameToId.get(e.exerciseName) || '',
+            })),
+          })),
+        };
+      } catch {}
+    }
+    return handleSave(data);
+  };
+
   const handleToggle = (id: string) => {
     const next = activeId === id ? null : id;
     setActiveId(next);
@@ -928,7 +957,7 @@ export default function ProfilePage() {
         />
       )}
       {showImport && (
-        <ImportModal onClose={() => setShowImport(false)} onImport={handleSave} existingNames={existingNames} />
+        <ImportModal onClose={() => setShowImport(false)} onImport={handleImportSave} existingNames={existingNames} />
       )}
       {editTarget && editMode === 'equipment' && (
         <AddProfileModal

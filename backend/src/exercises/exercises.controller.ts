@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../admin/admin.guard';
 import { ExercisesService } from './exercises.service';
@@ -14,6 +14,12 @@ export class ExercisesController {
   ) {
     const names = equipmentNames ? equipmentNames.split(',').map(s => s.trim()) : [];
     return this.exercisesService.findByFilter(bodyPart ?? '', names);
+  }
+
+  @Post('resolve')
+  @HttpCode(200)
+  resolveByNames(@Body() dto: { names: string[] }) {
+    return this.exercisesService.resolveByNames(dto.names ?? []);
   }
 
   @Post()

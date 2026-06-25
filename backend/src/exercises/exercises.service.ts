@@ -55,6 +55,14 @@ export class ExercisesService {
     });
   }
 
+  resolveByNames(names: string[]) {
+    if (names.length === 0) return Promise.resolve([]);
+    return this.prisma.exercise.findMany({
+      where: { name: { in: names } },
+      select: { id: true, name: true, externalId: true },
+    });
+  }
+
   async create(name: string, bodyPart: string, equipmentName: string, repType: 'count' | 'time' = 'count') {
     const existing = await this.prisma.exercise.findUnique({ where: { name } });
     if (existing) throw new ConflictException('Exercise already exists');
